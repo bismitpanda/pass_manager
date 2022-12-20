@@ -52,7 +52,7 @@ macro_rules! scan {
 }
 
 fn get_key() -> GenericArray<u8, UInt<UInt<UInt<UInt<UInt<UInt<UTerm, B1>, B0>, B0>, B0>, B0>, B0>> {
-    let key = scan!("Enter key");
+    let key = rpassword::prompt_password("Your key: ").unwrap();
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
 
@@ -199,7 +199,7 @@ impl Database {
     }
 
     pub fn reset() -> Result<(), Box<dyn Error>> {
-        let conformation = scan!("Are you sure you wantt to reset passwords? (y/n)");
+        let conformation = scan!("Are you sure you want to reset passwords? (y/n)");
         if conformation == "y" {
             let empty: HashMap<String, String> = HashMap::new();
             let json = serde_json::to_string_pretty(&empty)?;
