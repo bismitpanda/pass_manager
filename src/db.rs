@@ -201,7 +201,14 @@ impl Database {
     pub fn reset() -> Result<(), Box<dyn Error>> {
         let conformation = scan!("Are you sure you wantt to reset passwords? (y/n)");
         if conformation == "y" {
-            Database::init()
+            let empty: HashMap<String, String> = HashMap::new();
+            let json = serde_json::to_string_pretty(&empty)?;
+    
+            let path = Path::new(env!("APPDATA")).join(".pass_manager.config");
+            let mut file = File::create(path.as_path())?;
+    
+            file.write_all(json.as_bytes())?;
+            Ok(())
         } else {
             Ok(())
         }
