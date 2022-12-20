@@ -27,7 +27,7 @@ fn handle_error(res: Result<(), Box<dyn Error>>) {
 }
 
 fn main() {
-    println!("{}\n\n{}\n{}", "    ______                                              _     ___  ___                                        
+    println!("{}\n\n{}v{}\n{}", "    ______                                              _     ___  ___                                        
     | ___ \\                                            | |    |  \\/  |                                        
     | |_/ /  __ _  ___  ___ __      __  ___   _ __   __| |    | .  . |  __ _  _ __    __ _   __ _   ___  _ __ 
     |  __/  / _` |/ __|/ __|\\ \\ /\\ / / / _ \\ | '__| / _` |    | |\\/| | / _` || '_ \\  / _` | / _` | / _ \\| '__|
@@ -35,7 +35,8 @@ fn main() {
     \\_|     \\__,_||___/|___/  \\_/\\_/   \\___/ |_|    \\__,_|    \\_|  |_/ \\__,_||_| |_| \\__,_| \\__, | \\___||_|   
                                                                                              __/ |            
                                                                                             |___/             ".blue(),
-"                                                                                              v1.0".bright_cyan(),
+"                                                                                              ",
+env!("CARGO_PKG_VERSION").bright_cyan(),
 "                                                   By: Blood Rogue (github.com/blood-rogue)".green());
 
     let args: Vec<String> = env::args().collect();
