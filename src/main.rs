@@ -5,7 +5,7 @@ use crate::pass_manager::PassManager;
 use colored::*;
 use std::{
     io::Write,
-    error::Error, path::Path
+    error::Error
 };
 
 fn handle_error(res: Result<(), Box<dyn Error>>) {
@@ -35,7 +35,8 @@ fn main() {
 env!("CARGO_PKG_VERSION").bright_cyan(),
 "                                                   By: Blood Rogue (github.com/blood-rogue)".green());
 
-    let path = Path::new(env!("LOCALAPPDATA")).join("pass_manager");
+    let path = std::path::Path::new(env!("LOCALAPPDATA")).join("pass_manager");
+    // let path = std::path::PathBuf::from("pass_manager");
 
     let mut db = match PassManager::new(path) {
         Ok(db) => db,

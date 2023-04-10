@@ -4,7 +4,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{Write, Read},
     error::Error,
-    collections::BTreeMap,
+    collections::{BTreeMap, btree_map::Entry::{Occupied, Vacant}},
 };
 
 use aes_gcm::{
@@ -20,7 +20,7 @@ use crate::table::Table;
 
 #[macro_export]
 macro_rules! scan {
-    ($var:literal) => {{
+    ($var:expr) => {{
         print!("{}: ", $var);
         match std::io::stdout().flush() {
             Ok(_) => {},
@@ -57,10 +57,15 @@ impl PassManager {
         if !bin_path.exists() {
             File::create(bin_path.clone())?;
             let key = rpassword::prompt_password("Enter a key: ").unwrap();
+            let salt: [u8; 16] = rand::random();
 
-            let cipher_key = Sha256::digest(key);
+            let mut salted = salt.to_vec();
+            salted.extend_from_slice(key.as_bytes());
+
+            let cipher_key = Sha256::digest(&salted);
 
             let mut f = File::create(sha_path)?;
+            f.write_all(&salt)?;
             f.write_all(&cipher_key)?;
 
             return Ok(Self {
@@ -71,12 +76,22 @@ impl PassManager {
         }
 
         let key = rpassword::prompt_password("Your key: ").unwrap();
-        let cipher_key = Sha256::digest(key);
 
-        let mut buf: [u8; 32] = [0; 32];
-        File::open(sha_path)?.read_exact(&mut buf)?;
+        let mut sha_file = File::open(sha_path)?;
 
-        if cipher_key.as_slice() != buf {
+        let mut salt = [0; 16];
+
+        sha_file.read_exact(&mut salt)?;
+
+        let mut salted = salt.to_vec();
+        salted.extend_from_slice(key.as_bytes());
+
+        let cipher_key = Sha256::digest(&salted);
+
+        let mut hash: [u8; 32] = [0; 32];
+        sha_file.read_exact(&mut hash)?;
+
+        if cipher_key.as_slice() != hash {
             return Err("Incorrect password".into());
         }
 
@@ -126,7 +141,17 @@ impl PassManager {
             Err(e) => return Err(format!("Error ocuured while encryption: {}", e).into()),
         };
 
-        self.db.insert(label, (nonce_slice, ciphertext));
+        match self.db.entry(label.clone()) {
+            Vacant(entry) => {
+                entry.insert((nonce_slice, ciphertext));
+            },
+            Occupied(mut entry) => {
+                let choice = scan!(format!("A password exists for \"{label}\". Do you want to overwrite? (y/n)"));
+                if choice == "y" {
+                    entry.insert((nonce_slice, ciphertext));
+                }
+            }
+        };
 
         Ok(())
     }
@@ -208,7 +233,7 @@ impl PassManager {
     pub fn gen(&mut self, label: String, len: usize) -> Result<(), Box<dyn Error>> {
         let mut rng = rand::thread_rng();
         let range = if scan!("Do you want special chars? (y/n)") == "y" { 94 } else { 62 };
-        let password_charset = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+        let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
         let mut password = String::with_capacity(len);
         for _ in 0..len {
