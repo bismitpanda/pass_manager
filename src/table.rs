@@ -1,21 +1,19 @@
-use std::error::Error;
-
 use colored::Colorize;
 
-const TOP_LEFT_CORNER: &'static str = "╭";
-const TOP_RIGHT_CORNER: &'static str = "╮";
-const BOTTOM_LEFT_CORNER: &'static str = "╰";
-const BOTTOM_RIGHT_CORNER: &'static str = "╯";
+const TOP_LEFT_CORNER: &str = "╭";
+const TOP_RIGHT_CORNER: &str = "╮";
+const BOTTOM_LEFT_CORNER: &str = "╰";
+const BOTTOM_RIGHT_CORNER: &str = "╯";
 
-const HORIZONTAL_BAR: &'static str = "─";
-const VERTICAL_BAR: &'static str = "│";
+const HORIZONTAL_BAR: &str = "─";
+const VERTICAL_BAR: &str = "│";
 
-const VERTICAL_LEFT_JOINT: &'static str = "├";
-const VERTICAL_RIGHT_JOINT: &'static str = "┤";
-const HORIZONTAL_TOP_JOINT: &'static str = "┬";
-const HORIZONTAL_BOTTOM_JOINT: &'static str = "┴";
+const VERTICAL_LEFT_JOINT: &str = "├";
+const VERTICAL_RIGHT_JOINT: &str = "┤";
+const HORIZONTAL_TOP_JOINT: &str = "┬";
+const HORIZONTAL_BOTTOM_JOINT: &str = "┴";
 
-const INTERSECTION: &'static str = "┼";
+const INTERSECTION: &str = "┼";
 
 pub struct Table {
     headers: Vec<String>,
@@ -34,7 +32,7 @@ impl Table {
         self.rows.push(row)
     }
 
-    fn check(&self) -> Result<(), Box<dyn Error>> {
+    fn check(&self) -> Result<(), String> {
         let n = self.headers.len();
         for row in &self.rows {
             if n != row.len() {
@@ -45,25 +43,25 @@ impl Table {
         Ok(())
     }
 
-    fn calc_max(&self) -> Result<Vec<usize>, Box<dyn Error>> {
+    fn calc_max(&self) -> Result<Vec<usize>, String> {
         let mut maxes: Vec<_> = self.headers.iter().map(String::len).collect();
 
         for row in &self.rows {
-            for (i, data) in row.iter().enumerate() {
-                if data.len() > maxes[i] {
-                    maxes[i] = data.len()
+            for (max, data) in maxes.iter_mut().zip(row.iter()) {
+                if data.len() > *max {
+                    *max = data.len()
                 }
             }
         };
 
-        Ok(maxes.iter().map(|&max| max + 2).collect())
+        Ok(maxes.iter().map(|max| max + 2).collect())
     }
 
-    pub fn display(self) -> Result<(), Box<dyn Error>> {
+    pub fn display(self) -> Result<(), String> {
         self.check()?;
 
         let maxes = self.calc_max()?;
-        let (&last_max, rest_maxes) = maxes.split_last().unwrap();
+        let (&last_max, rest_maxes) = maxes.split_last().ok_or_else(|| "couldn't split maxes".to_string())?;
 
         print!("{}", TOP_LEFT_CORNER.yellow());
         for &max in rest_maxes {

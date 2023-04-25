@@ -3,10 +3,8 @@ mod pass_manager;
 
 use crate::pass_manager::PassManager;
 use colored::*;
-use std::{
-    io::Write,
-    error::Error
-};
+use std::error::Error;
+use std::io::Write;
 
 fn handle_error(res: Result<(), Box<dyn Error>>) {
     match res {
@@ -17,69 +15,112 @@ fn handle_error(res: Result<(), Box<dyn Error>>) {
 
 macro_rules! scan_secure {
     ($prompt:literal) => {
-        rpassword::prompt_password($prompt).unwrap()
+        rpassword::prompt_password(format!("{}: ", $prompt)).unwrap()
     };
 }
 
-fn main() {
-    println!("{}\n\n{}v{}\n{}", r"
-    ______                                              _     ___  ___
-    | ___ \                                            | |    |  \/  |
-    | |_/ /  __ _  ___  ___ __      __  ___   _ __   __| |    | .  . |  __ _  _ __    __ _   __ _   ___  _ __
-    |  __/  / _` |/ __|/ __|\ \ /\ / / / _ \ | '__| / _` |    | |\/| | / _` || '_ \  / _` | / _` | / _ \| '__|
-    | |    | (_| |\__ \\__ \ \ V  V / | (_) || |   | (_| |    | |  | || (_| || | | || (_| || (_| ||  __/| |
-    \_|     \__,_||___/|___/  \_/\_/   \___/ |_|    \__,_|    \_|  |_/ \__,_||_| |_| \__,_| \__, | \___||_|
-                                                                                             __/ |
-                                                                                            |___/".blue(),
-"                                                                                                ",
-env!("CARGO_PKG_VERSION").bright_cyan(),
-"                                                   By: Blood Rogue (github.com/blood-rogue)".green());
+macro_rules! scan {
+    ($var:expr, $ident:tt) => {
+        print!("{}", $var);
+        handle_error(std::io::stdout().flush().map_err(|err| err.to_string().into()));
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line).unwrap();
+        let $ident = String::from(line.trim_end());
+    };
+}
 
-    let path = std::path::Path::new(env!("LOCALAPPDATA")).join("pass_manager");
-    // let path = std::path::PathBuf::from("pass_manager");
+fn run() -> Result<bool, Box<dyn Error>> {
+    println!("{}\n{}\n{}", r"
+     ▄▄▄· ▄▄▄· .▄▄ · .▄▄ · ▄▄▌ ▐ ▄▌      ▄▄▄  ·▄▄▄▄    • ▌ ▄ ·.  ▄▄▄·  ▐ ▄  ▄▄▄·  ▄▄ • ▄▄▄ .▄▄▄
+    ▐█ ▄█▐█ ▀█ ▐█ ▀. ▐█ ▀. ██· █▌▐█ ▄█▀▄ ▀▄ █·██· ██   ·██ ▐███▪▐█ ▀█ •█▌▐█▐█ ▀█ ▐█ ▀ ▪▀▄.▀·▀▄ █·
+     ██▀·▄█▀▀█ ▄▀▀▀█▄▄▀▀▀█▄██▪▐█▐▐▌▐█▌.▐▌▐▀▀▄ ▐█▪ ▐█▌  ▐█ ▌▐▌▐█·▄█▀▀█ ▐█▐▐▌▄█▀▀█ ▄█ ▀█▄▐▀▀▪▄▐▀▀▄
+    ▐█▪·•▐█▪ ▐▌▐█▄▪▐█▐█▄▪▐█▐█▌██▐█▌▐█▌.▐▌▐█•█▌██. ██   ██ ██▌▐█▌▐█▪ ▐▌██▐█▌▐█▪ ▐▌▐█▄▪▐█▐█▄▄▌▐█•█▌
+    .▀    ▀  ▀  ▀▀▀▀  ▀▀▀▀  ▀▀▀▀ ▀▪ ▀█▄▀▪.▀  ▀▀▀▀▀▀•   ▀▀  █▪▀▀▀ ▀  ▀ ▀▀ █▪ ▀  ▀ ·▀▀▀▀  ▀▀▀ .▀  ▀".blue(),
+format!("                                                                                            v{}", env!("CARGO_PKG_VERSION")).bright_cyan(),
+"                                                           By: Blood Rogue (github.com/blood-rogue)".green());
+
+    let path = std::path::Path::new(env!("LOCALAPPDATA")).join("PassManager").join("pass_manager");
+    // let path = std::path::PathBuf::from("PassManager").join("pass_manager");
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     let mut db = match PassManager::new(path) {
         Ok(db) => db,
-        Err(err) => return println!("[ERROR]: {}", err.to_string().red())
+        Err(err) => {
+            println!("[ERROR]: {}", err.to_string().red());
+            return Ok(false);
+        }
     };
 
     loop {
-        let cmd = scan!(>>);
+        scan!(">> ", cmd);
         let res: Result<(), Box<dyn Error>> = match cmd.as_str() {
             "help" => db.help(),
             "add" => {
-                let label = scan!("Enter label");
-                let password = scan_secure!("Enter password: ");
+                scan!("Enter label: ", label);
+                let password = scan_secure!("Enter password");
                 db.add(label, password)
             },
             "remove" => {
-                let label = scan!("Enter label");
+                scan!("Enter label: ", label);
                 db.remove(label)
             },
             "modify" => {
-                let label = scan!("Enter label");
-                let password = scan_secure!("Enter password: ");
+                scan!("Enter label: ", label);
+                let password = scan_secure!("Enter password");
                 db.modify(label, password)
             },
-            "view" => {
-                let label = scan!("Enter label");
-                db.view(label)
+            "copy" => {
+                scan!("Enter label: ", label);
+                db.copy(label)
             },
             "list" => db.list(),
             "reset" => db.reset(),
             "gen" => {
-                let label = scan!("Enter label");
-                match scan!("Enter the length of password").parse::<usize>() {
+                scan!("Enter label: ", label);
+                scan!("Enter the length of password: ", len);
+                match len.parse::<usize>() {
                     Ok(len) => db.gen(label, len),
                     Err(err) => Err(err.into())
                 }
             },
-            "exit" => {
-                break db.exit();
+
+            "change" => {
+                let cur_key = scan_secure!("Enter current key");
+                let new_key = scan_secure!("Enter new key");
+                db.change(cur_key, new_key)
             },
+
+            "create" => {
+                scan!("Enter username: ", username);
+                let password = scan_secure!("Enter new key");
+                db.create(username, password)
+            },
+
+            "exit" => break db.exit(),
+
+            "logout" => {
+                db.exit();
+                return Ok(true);
+            },
+
             _ => Err("Invalid subcommand".into())
         };
 
         handle_error(res);
+    }
+
+    Ok(false)
+}
+
+fn main() {
+    loop {
+        match run() {
+            Ok(false) => break,
+            Ok(true) => continue,
+            Err(err) => handle_error(Err(err))
+        }
     }
 }
