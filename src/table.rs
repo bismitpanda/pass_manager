@@ -17,14 +17,14 @@ const INTERSECTION: &str = "┼";
 
 pub struct Table {
     headers: Vec<String>,
-    rows: Vec<Vec<String>>
+    rows: Vec<Vec<String>>,
 }
 
 impl Table {
     pub fn new(headers: Vec<String>) -> Self {
         Self {
             rows: Vec::new(),
-            headers
+            headers,
         }
     }
 
@@ -52,7 +52,7 @@ impl Table {
                     *max = data.len()
                 }
             }
-        };
+        }
 
         Ok(maxes.iter().map(|max| max + 2).collect())
     }
@@ -61,7 +61,9 @@ impl Table {
         self.check()?;
 
         let maxes = self.calc_max()?;
-        let (&last_max, rest_maxes) = maxes.split_last().ok_or_else(|| "couldn't split maxes".to_string())?;
+        let (&last_max, rest_maxes) = maxes
+            .split_last()
+            .ok_or_else(|| "couldn't split maxes".to_string())?;
 
         print!("{}", TOP_LEFT_CORNER.yellow());
         for &max in rest_maxes {
@@ -74,7 +76,12 @@ impl Table {
 
         print!("{}", VERTICAL_BAR.yellow());
         for (i, data) in self.headers.iter().enumerate() {
-            print!("{:^max$}{}", data.bold().blue(), VERTICAL_BAR.yellow(), max = maxes[i]);
+            print!(
+                "{:^max$}{}",
+                data.bold().blue(),
+                VERTICAL_BAR.yellow(),
+                max = maxes[i]
+            );
         }
         println!();
 

@@ -1,21 +1,23 @@
 use colored::*;
 use rkyv::AlignedVec;
 use std::{
-    path::{Path, PathBuf},
-    fs::{File, OpenOptions},
-    io::{Write, Read, Seek, SeekFrom},
+    collections::{
+        btree_map::Entry::{Occupied, Vacant},
+        BTreeMap,
+    },
     error::Error,
-    collections::{BTreeMap, btree_map::Entry::{Occupied, Vacant}},
+    fs::{File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
 };
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
-    Aes256Gcm,
-    Nonce
+    Aes256Gcm, Nonce,
 };
 
 use rand::Rng;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use sha3::Sha3_256;
 
 use crate::table::Table;
@@ -51,7 +53,7 @@ impl Users {
     fn check(&self, username: String, password: String) -> Result<Vec<u8>, Box<dyn Error>> {
         let &(salt, hash) = match self.0.get(&username) {
             Some(val) => val,
-            None => return Err(format!("No user \"{}\" found!", username).into())
+            None => return Err(format!("No user \"{}\" found!", username).into()),
         };
 
         let password_bytes = [&salt, password.as_bytes()].concat();
@@ -65,22 +67,31 @@ impl Users {
         Ok(Sha256::digest(password_bytes).to_vec())
     }
 
-    fn create<P: AsRef<Path>>(path: P, username: String, salt: [u8; 16], hash: [u8; 32]) -> Result<(), Box<dyn Error>> {
+    fn create<P: AsRef<Path>>(
+        path: P,
+        username: String,
+        salt: [u8; 16],
+        hash: [u8; 32],
+    ) -> Result<(), Box<dyn Error>> {
         let mut users = match std::fs::read(path.as_ref().with_extension("users")) {
-            Ok(buf) => {let mut aligned_buf = AlignedVec::new();
+            Ok(buf) => {
+                let mut aligned_buf = AlignedVec::new();
                 aligned_buf.extend_from_slice(&buf);
 
                 let users = rkyv::from_bytes::<Users>(&aligned_buf)?;
                 users
             }
 
-            Err(_) => Users(BTreeMap::new())
+            Err(_) => Users(BTreeMap::new()),
         };
 
         users.0.insert(username.clone(), (salt, hash));
         File::create(path.as_ref().with_extension(username))?;
 
-        std::fs::write(path.as_ref().with_extension("users"), rkyv::to_bytes::<_, 1024>(&users)?)?;
+        std::fs::write(
+            path.as_ref().with_extension("users"),
+            rkyv::to_bytes::<_, 1024>(&users)?,
+        )?;
 
         Ok(())
     }
@@ -89,7 +100,7 @@ impl Users {
 pub struct PassManager {
     passwords: BTreeMap<String, ([u8; 12], Vec<u8>)>,
     path: PathBuf,
-    cipher: Aes256Gcm
+    cipher: Aes256Gcm,
 }
 
 impl PassManager {
@@ -113,7 +124,7 @@ impl PassManager {
             return Ok(Self {
                 passwords: BTreeMap::new(),
                 path: bin_path,
-                cipher: Aes256Gcm::new(&cipher_key)
+                cipher: Aes256Gcm::new(&cipher_key),
             });
         }
 
@@ -134,7 +145,11 @@ impl PassManager {
 
         let passwords = rkyv::from_bytes(&aligned_buf)?;
 
-        Ok(Self { passwords, cipher, path: bin_path })
+        Ok(Self {
+            passwords,
+            cipher,
+            path: bin_path,
+        })
     }
 
     pub fn exit(self) {
@@ -145,8 +160,9 @@ impl PassManager {
     }
 
     pub fn help(&self) -> Result<(), Box<dyn Error>> {
-        println!("{}",
-    "Commands:
+        println!(
+            "{}",
+            "Commands:
         help:   Print the help message
         add:    Add a new password
         remove: Remove a password
@@ -157,7 +173,9 @@ impl PassManager {
         reset:  Reset all passwords of the user
         logout: Logout from current user
         create: Create a new user
-        change: Change the current user's password.".green());
+        change: Change the current user's password."
+                .green()
+        );
         Ok(())
     }
 
@@ -174,9 +192,12 @@ impl PassManager {
         match self.passwords.entry(label.clone()) {
             Vacant(entry) => {
                 entry.insert((nonce_slice, ciphertext));
-            },
+            }
             Occupied(mut entry) => {
-                scan!(format!("A password exists for \"{label}\". Do you want to overwrite? (y/n)"), choice);
+                scan!(
+                    format!("A password exists for \"{label}\". Do you want to overwrite? (y/n)"),
+                    choice
+                );
                 if choice == "y" {
                     entry.insert((nonce_slice, ciphertext));
                 }
@@ -188,8 +209,8 @@ impl PassManager {
 
     pub fn remove(&mut self, label: String) -> Result<(), Box<dyn Error>> {
         match self.passwords.remove(&label) {
-            Some(_) => {},
-            None => return Err(format!("No entry found with label \"{}\" ", label).into())
+            Some(_) => {}
+            None => return Err(format!("No entry found with label \"{}\" ", label).into()),
         };
 
         Ok(())
@@ -197,8 +218,8 @@ impl PassManager {
 
     pub fn modify(&mut self, label: String, password: String) -> Result<(), Box<dyn Error>> {
         match self.passwords.remove(&label) {
-            Some(_) => {},
-            None => return Err(format!("No entry found with label \"{}\" ", label).into())
+            Some(_) => {}
+            None => return Err(format!("No entry found with label \"{}\" ", label).into()),
         };
 
         let nonce_slice: [u8; 12] = rand::random();
@@ -217,7 +238,7 @@ impl PassManager {
     pub fn copy(&self, label: String) -> Result<(), Box<dyn Error>> {
         let (nonce, password) = match self.passwords.get(&label) {
             Some(n) => n,
-            None => return Err(format!("No passwords found with label \"{}\"", label).into())
+            None => return Err(format!("No passwords found with label \"{}\"", label).into()),
         };
 
         let nonce = Nonce::from_slice(nonce);
@@ -229,7 +250,11 @@ impl PassManager {
 
         match clipboard_win::set_clipboard_string(String::from_utf8(plaintext)?.as_str()) {
             Ok(()) => Ok(()),
-            Err(err) => Err(format!("Unable to set password to clipboard. Error: {}", err.message()).into())
+            Err(err) => Err(format!(
+                "Unable to set password to clipboard. Error: {}",
+                err.message()
+            )
+            .into()),
         }
     }
 
@@ -287,14 +312,22 @@ impl PassManager {
         let mut salted = salt.to_vec();
         salted.extend_from_slice(password.as_bytes());
 
-        Users::create(self.path.with_extension(username.clone()), username.clone(), salt, Sha3_256::digest(&salted).into())?;
+        Users::create(
+            self.path.with_extension(username.clone()),
+            username.clone(),
+            salt,
+            Sha3_256::digest(&salted).into(),
+        )?;
 
-        std::fs::write(self.path.with_extension(username), rkyv::to_bytes::<_, 1024>(&BTreeMap::<String, ([u8; 12], Vec<u8>)>::new())?)?;
+        std::fs::write(
+            self.path.with_extension(username),
+            rkyv::to_bytes::<_, 1024>(&BTreeMap::<String, ([u8; 12], Vec<u8>)>::new())?,
+        )?;
         Ok(())
     }
 
     pub fn change(&mut self, cur_key: String, new_key: String) -> Result<(), Box<dyn Error>> {
-        let sha_path  = self.path.with_extension("sha");
+        let sha_path = self.path.with_extension("sha");
         let mut f = OpenOptions::new().write(true).read(true).open(sha_path)?;
 
         f.seek(SeekFrom::Start(0))?;
