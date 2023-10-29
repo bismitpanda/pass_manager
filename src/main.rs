@@ -8,7 +8,7 @@ use pass_manager::PasswordManager;
 
 fn main() {
     let cli = cmd::Command::parse();
-    let mut manager = PasswordManager::new("meta.bin");
+    let mut manager = PasswordManager::new(dirs::data_local_dir().unwrap());
 
     match cli.subcommand {
         Subcommand::Copy { label } => {

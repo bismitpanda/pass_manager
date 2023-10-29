@@ -58,15 +58,8 @@ impl Store {
     }
 
     fn open<P: AsRef<Path>>(path: P) -> Self {
-        let mut buf = Vec::new();
-
-        let mut file = File::open(path).unwrap();
-        file.read_to_end(&mut buf).unwrap();
-
-        let mut aligned_buf = rkyv::AlignedVec::new();
-        aligned_buf.extend_from_slice(&buf);
-
-        rkyv::from_bytes::<Self>(&aligned_buf).unwrap()
+        let buf = std::fs::read(path).unwrap();
+        rkyv::from_bytes::<Self>(&buf).unwrap()
     }
 
     fn save<P: AsRef<Path>>(&self, path: P) {
