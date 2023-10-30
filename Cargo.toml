@@ -1,6 +1,6 @@
 [package]
 name = "pm"
-version = "0.1.1"
+version = "0.1.3"
 edition = "2021"
 
 [dependencies]
@@ -19,3 +19,4 @@ panic = "abort"
 lto = true
 codegen-units = 1
 strip = true
+opt-level = "s"

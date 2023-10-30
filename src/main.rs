@@ -4,7 +4,7 @@ mod table;
 
 fn main() {
     let cli: cmd::Command = cmd::from_args();
-    let mut manager = manager::Manager::new(&dirs::data_local_dir().unwrap().join("pm.store"));
+    let mut manager = manager::Manager::new(dirs::data_local_dir().unwrap().join("pm.store"));
 
     match cli.subcommand {
         cmd::Subcommand::Copy(cmd::Copy { label }) => {
@@ -32,6 +32,17 @@ fn main() {
             };
 
             manager.add(&label, &password);
+        }
+
+        cmd::Subcommand::Modify => {
+            let new_key = rpassword::prompt_password("Enter new key: ").unwrap();
+            let retyped_new_key = rpassword::prompt_password("Retype new key: ").unwrap();
+
+            if new_key != retyped_new_key {
+                println!("New key doesn't match retyped key")
+            } else {
+                manager.modify(&new_key);
+            }
         }
     }
 }

@@ -33,7 +33,7 @@ impl<const N: usize> Table<N> {
     }
 
     fn calc_max(&self) -> Vec<usize> {
-        let mut maxes: Vec<_> = self.headers.iter().map(String::len).collect();
+        let mut maxes: Vec<_> = self.headers.iter().map(|s| s.len()).collect();
 
         for row in &self.rows {
             for (max, data) in maxes.iter_mut().zip(row.iter()) {
@@ -68,9 +68,7 @@ impl<const N: usize> Table<N> {
         for (i, data) in self.headers.iter().enumerate() {
             write!(buf, "{:^max$}{}", data, VERTICAL_BAR, max = maxes[i]).unwrap();
         }
-        writeln!(buf).unwrap();
-
-        write!(buf, "{VERTICAL_LEFT_JOINT}").unwrap();
+        write!(buf, "\n{VERTICAL_LEFT_JOINT}").unwrap();
         for (j, _) in self.headers.iter().enumerate() {
             write!(buf, "{}", HORIZONTAL_BAR.repeat(maxes[j])).unwrap();
             if j != self.headers.len() - 1 {

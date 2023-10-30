@@ -11,6 +11,7 @@ pub enum Subcommand {
     Remove(Remove),
     Copy(Copy),
     List,
+    Modify,
 }
 
 pub struct New {
@@ -29,11 +30,6 @@ pub struct Copy {
 }
 
 macro_rules! print_exit {
-    ($id:ident) => {
-        println!("{}", $id);
-        exit(0)
-    };
-
     ($s:literal, $t:expr) => {{
         println!($s, $t);
         exit(0);
@@ -60,9 +56,7 @@ pub fn from_args() -> Command {
                 let mut label = None;
                 while let Some(arg) = parser.next().unwrap() {
                     match arg {
-                        Short('h') | Long("help") => {
-                            print_exit!(NEW_HELP);
-                        }
+                        Short('h') | Long("help") => print_exit!("{NEW_HELP}"),
                         Short('i') | Long("input") => new_subcmd.input = true,
                         Short('s') | Long("special-chars") => new_subcmd.special_chars = true,
                         Short('n') | Long("len") => {
@@ -76,7 +70,7 @@ pub fn from_args() -> Command {
                 if let Some(label) = label {
                     new_subcmd.label = label;
                 } else {
-                    print_exit!("No label found");
+                    print_exit!("No label found\n{NEW_HELP}");
                 }
 
                 Subcommand::New(new_subcmd)
@@ -85,57 +79,63 @@ pub fn from_args() -> Command {
                 let mut label = None;
                 while let Some(arg) = parser.next().unwrap() {
                     match arg {
-                        Short('h') | Long("help") => {
-                            print_exit!(REMOVE_HELP);
-                        }
+                        Short('h') | Long("help") => print_exit!("{REMOVE_HELP}"),
                         Value(val) if label.is_none() => label = Some(val.string().unwrap()),
                         _ => print_exit!("{}", arg.unexpected()),
                     }
                 }
 
                 Subcommand::Remove(Remove {
-                    label: label.unwrap(),
+                    label: label.expect(REMOVE_HELP),
                 })
             }
             "copy" | "cp" | "c" => {
                 let mut label = None;
                 while let Some(arg) = parser.next().unwrap() {
                     match arg {
-                        Short('h') | Long("help") => {
-                            print_exit!(COPY_HELP);
-                        }
+                        Short('h') | Long("help") => print_exit!("{COPY_HELP}"),
                         Value(val) if label.is_none() => label = Some(val.string().unwrap()),
                         _ => print_exit!("{}", arg.unexpected()),
                     }
                 }
 
                 Subcommand::Copy(Copy {
-                    label: label.unwrap(),
+                    label: label.expect(COPY_HELP),
                 })
             }
             "list" | "ls" | "l" => {
                 let next = parser.next().unwrap();
                 if let Some(Short('h') | Long("help")) = next {
-                    print_exit!(LIST_HELP);
+                    print_exit!("{LIST_HELP}");
                 } else if let Some(arg) = next {
                     print_exit!("{}", arg.unexpected())
                 }
 
                 Subcommand::List
             }
+            "modify" | "md" | "m" => {
+                let next = parser.next().unwrap();
+                if let Some(Short('h') | Long("help")) = next {
+                    print_exit!("{MODIFY_HELP}");
+                } else if let Some(arg) = next {
+                    print_exit!("{}", arg.unexpected())
+                }
+
+                Subcommand::Modify
+            }
             "help" | "h" => {
                 if let Some(arg) = parser.next().unwrap() {
                     print_exit!("{}", arg.unexpected())
                 }
-                print_exit!(HELP);
+                print_exit!("{HELP}");
             }
 
-            _ => print_exit!("Unidentified subcommand"),
+            _ => print_exit!("Unidentified subcommand\n{HELP}"),
         };
 
         return Command { subcommand };
     } else {
-        print_exit!("No subcommand found");
+        print_exit!("{HELP}");
     };
 }
 
@@ -148,7 +148,8 @@ Commands:
   new, n                Add a new entry
   remove, rm, r         Remove an entry
   copy, cp, c           Copy an entry to clipboard
-  list, ls, l           List entries";
+  list, ls, l           List entries
+  modify, md, m         Modify current password";
 
 pub const NEW_HELP: &str = "Usage: pm.exe (new/n) <label> [-i] [-n <len>] [-s]
 
@@ -186,6 +187,13 @@ Options:
 pub const LIST_HELP: &str = "Usage: pm.exe (list/ls/l)
 
 List entries
+
+Options:
+  -h, --help            display usage information";
+
+pub const MODIFY_HELP: &str = "Usage: pm.exe (modify/md/m)
+
+Modify Password
 
 Options:
   -h, --help            display usage information";
