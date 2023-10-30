@@ -1,11 +1,5 @@
-use clipboard::{ClipboardContext, ClipboardProvider};
 use std::{
-    collections::{
-        btree_map::Entry::{Occupied, Vacant},
-        BTreeMap,
-    },
     fs::File,
-    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -13,35 +7,34 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
-
-use rand::Rng;
+use clipboard::{ClipboardContext, ClipboardProvider};
+use hashbrown::{
+    hash_map::Entry::{Occupied, Vacant},
+    HashMap,
+};
 use sha2::{Digest, Sha256};
 
 use crate::table::Table;
 
 macro_rules! scan {
     ($var:expr, $ident:tt) => {
-        print!("{}", $var);
-        std::io::stdout().flush().unwrap();
+        println!("{}", $var);
         let mut line = String::new();
         std::io::stdin().read_line(&mut line).unwrap();
-        let $ident = String::from(line.trim_end());
+        let $ident = line.trim();
     };
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
-pub struct PasswordEntry {
+pub struct Record {
     nonce: [u8; 12],
     password: Vec<u8>,
 }
 
-impl PasswordEntry {
-    pub fn new(salt: [u8; 12], password_encrypted: Vec<u8>) -> Self {
-        Self {
-            nonce: salt,
-            password: password_encrypted,
-        }
+impl Record {
+    pub fn new(nonce: [u8; 12], password: Vec<u8>) -> Self {
+        Self { nonce, password }
     }
 }
 
@@ -49,20 +42,23 @@ impl PasswordEntry {
 #[archive(check_bytes)]
 struct Store {
     salt: [u8; 16],
-    passwords: BTreeMap<String, PasswordEntry>,
+    passwords: HashMap<String, Record>,
 }
 
 impl Store {
-    fn new(salt: [u8; 16], passwords: BTreeMap<String, PasswordEntry>) -> Self {
-        Self { salt, passwords }
+    fn new(salt: [u8; 16]) -> Self {
+        Self {
+            salt,
+            passwords: HashMap::new(),
+        }
     }
 
-    fn open<P: AsRef<Path>>(path: P) -> Self {
+    fn open(path: &Path) -> Self {
         let buf = std::fs::read(path).unwrap();
         rkyv::from_bytes::<Self>(&buf).unwrap()
     }
 
-    fn save<P: AsRef<Path>>(&self, path: P) {
+    fn save(&self, path: &Path) {
         let data = rkyv::to_bytes::<_, 1024>(self).unwrap();
         std::fs::write(path, &data).unwrap();
     }
@@ -76,16 +72,14 @@ impl Store {
     }
 }
 
-pub struct PasswordManager {
+pub struct Manager {
     store: Store,
     cipher: Aes256Gcm,
     path: PathBuf,
 }
 
-impl PasswordManager {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
-        let path = path.as_ref();
-
+impl Manager {
+    pub fn new(path: &Path) -> Self {
         if path.exists() {
             let store = Store::open(path);
             let key = rpassword::prompt_password("Your key: ").unwrap();
@@ -103,6 +97,8 @@ impl PasswordManager {
             }
         } else {
             File::create(path).unwrap();
+            println!("Created store file at '{}'", path.display());
+
             let key = rpassword::prompt_password("Enter a key: ").unwrap();
             let salt: [u8; 16] = rand::random();
 
@@ -112,7 +108,7 @@ impl PasswordManager {
             let cipher_key = Sha256::digest(&salted);
 
             Self {
-                store: Store::new(salt, BTreeMap::new()),
+                store: Store::new(salt),
                 cipher: Aes256Gcm::new(&cipher_key),
                 path: path.to_path_buf(),
             }
@@ -131,15 +127,12 @@ impl PasswordManager {
 
         match self.store.passwords.entry(label.to_string()) {
             Vacant(entry) => {
-                entry.insert(PasswordEntry::new(nonce_slice, ciphertext));
+                entry.insert(Record::new(nonce_slice, ciphertext));
             }
             Occupied(mut entry) => {
-                scan!(
-                    format!("A password exists for \"{label}\". Do you want to overwrite? (y/n)"),
-                    choice
-                );
+                scan!("Overwrite existing password? (y/n) ", choice);
                 if choice == "y" {
-                    entry.insert(PasswordEntry::new(nonce_slice, ciphertext));
+                    entry.insert(Record::new(nonce_slice, ciphertext));
                 }
             }
         };
@@ -147,13 +140,13 @@ impl PasswordManager {
 
     pub fn remove(&mut self, label: &str) {
         if !self.store.remove(label) {
-            println!("No entry found with label \"{label}\" ");
+            println!("No entry found");
         }
     }
 
     pub fn copy(&self, label: &str) {
-        let Some(PasswordEntry { nonce, password }) = self.store.passwords.get(label) else {
-            return println!("No passwords found with label \"{label}\"");
+        let Some(Record { nonce, password }) = self.store.passwords.get(label) else {
+            return println!("No entry found");
         };
 
         let nonce = Nonce::from_slice(nonce);
@@ -168,42 +161,39 @@ impl PasswordManager {
 
     pub fn list(&self) {
         if self.store.is_empty() {
-            return println!("No passwords found");
+            return println!("Empty store");
         }
 
-        let mut t = Table::new(vec!["Labels".into(), "Passwords".into()]);
+        let mut t = Table::new(["Labels".into(), "Passwords".into()]);
 
-        for (label, PasswordEntry { nonce, password }) in &self.store.passwords {
+        for (label, Record { nonce, password }) in &self.store.passwords {
             let nonce = Nonce::from_slice(nonce);
             let plaintext = self.cipher.decrypt(nonce, password.as_slice()).unwrap();
 
-            t.insert(vec![
-                label.to_owned(),
-                String::from_utf8(plaintext).unwrap(),
-            ]);
+            t.insert([label.to_owned(), String::from_utf8(plaintext).unwrap()]);
         }
 
         t.display();
     }
-
-    pub fn gen(len: usize) -> String {
-        let mut rng = rand::thread_rng();
-        scan!("Do you want special chars? (y/n): ", choice);
-        let range = if choice == "y" { 94 } else { 62 };
-        let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-
-        let mut password = String::with_capacity(len);
-        for _ in 0..len {
-            let pos = rng.gen_range(0..range);
-            password.push(char::from_u32(u32::from(password_charset[pos])).unwrap());
-        }
-
-        password
-    }
 }
 
-impl Drop for PasswordManager {
+impl Drop for Manager {
     fn drop(&mut self) {
         self.store.save(&self.path);
     }
+}
+
+pub fn gen_password(len: usize, special_chars: bool) -> String {
+    let mut rng = rand::thread_rng();
+
+    let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+    let indices =
+        rand::seq::index::sample(&mut rng, if special_chars { 94 } else { 62 }, len).into_vec();
+
+    let mut password = Vec::with_capacity(len);
+    for index in indices {
+        password.push(password_charset[index]);
+    }
+
+    String::from_utf8(password).unwrap()
 }

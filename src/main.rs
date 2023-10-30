@@ -1,33 +1,34 @@
 mod cmd;
-mod pass_manager;
+mod manager;
 mod table;
 
-use clap::Parser;
-use cmd::Subcommand;
-use pass_manager::PasswordManager;
-
 fn main() {
-    let cli = cmd::Command::parse();
-    let mut manager = PasswordManager::new(dirs::data_local_dir().unwrap());
+    let cli: cmd::Command = cmd::from_args();
+    let mut manager = manager::Manager::new(&dirs::data_local_dir().unwrap().join("pm.store"));
 
     match cli.subcommand {
-        Subcommand::Copy { label } => {
+        cmd::Subcommand::Copy(cmd::Copy { label }) => {
             manager.copy(&label);
         }
 
-        Subcommand::Remove { label } => {
+        cmd::Subcommand::Remove(cmd::Remove { label }) => {
             manager.remove(&label);
         }
 
-        Subcommand::List => {
+        cmd::Subcommand::List => {
             manager.list();
         }
 
-        Subcommand::New { label, input, len } => {
+        cmd::Subcommand::New(cmd::New {
+            label,
+            input,
+            len,
+            special_chars,
+        }) => {
             let password = if input {
                 rpassword::prompt_password("Enter your password: ").unwrap()
             } else {
-                PasswordManager::gen(len)
+                manager::gen_password(len, special_chars)
             };
 
             manager.add(&label, &password);

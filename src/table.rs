@@ -15,32 +15,21 @@ const HORIZONTAL_BOTTOM_JOINT: &str = "┴";
 
 const INTERSECTION: &str = "┼";
 
-pub struct Table {
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
+pub struct Table<const N: usize> {
+    headers: [String; N],
+    rows: Vec<[String; N]>,
 }
 
-impl Table {
-    pub fn new(headers: Vec<String>) -> Self {
+impl<const N: usize> Table<N> {
+    pub fn new(headers: [String; N]) -> Self {
         Self {
             rows: Vec::new(),
             headers,
         }
     }
 
-    pub fn insert(&mut self, row: Vec<String>) {
+    pub fn insert(&mut self, row: [String; N]) {
         self.rows.push(row);
-    }
-
-    fn check(&self) -> Result<(), String> {
-        let n = self.headers.len();
-        for row in &self.rows {
-            if n != row.len() {
-                return Err("invalid length of row".into());
-            }
-        }
-
-        Ok(())
     }
 
     fn calc_max(&self) -> Vec<usize> {
@@ -58,8 +47,6 @@ impl Table {
     }
 
     pub fn display(self) {
-        self.check().unwrap();
-
         let mut buf = BufWriter::new(Vec::new());
 
         let maxes = self.calc_max();
