@@ -5,39 +5,43 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use clipboard::{ClipboardContext, ClipboardProvider};
+use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use hashbrown::{hash_map::Entry, HashMap};
 use rand::seq::SliceRandom;
+use serde_with::{formats::Uppercase, hex::Hex, serde_as};
 use sha2::{Digest, Sha256};
 
-use crate::table::Table;
+use crate::{cmd::SupportedFormat, table::Table};
 
-macro_rules! scan {
-    ($var:expr, $ident:tt) => {
-        println!("{}", $var);
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).unwrap();
-        let $ident = line.trim();
-    };
-}
-
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[serde_as]
+#[derive(
+    rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, serde::Deserialize, serde::Serialize,
+)]
 #[archive(check_bytes)]
-pub struct Record {
+struct Record {
+    #[serde_as(as = "Hex<Uppercase>")]
     nonce: [u8; 12],
+    #[serde_as(as = "Hex<Uppercase>")]
     password: Vec<u8>,
 }
 
 impl Record {
-    pub fn new(nonce: [u8; 12], password: Vec<u8>) -> Self {
+    fn new(nonce: [u8; 12], password: Vec<u8>) -> Self {
         Self { nonce, password }
     }
 }
 
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[serde_as]
+#[derive(
+    rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, serde::Deserialize, serde::Serialize,
+)]
 #[archive(check_bytes)]
 struct Store {
+    #[serde_as(as = "Hex<Uppercase>")]
     key: Vec<u8>,
+    #[serde_as(as = "Hex<Uppercase>")]
     nonce: [u8; 12],
+    #[serde_as(as = "Hex<Uppercase>")]
     salt: [u8; 16],
     passwords: HashMap<String, Record>,
 }
@@ -66,7 +70,7 @@ impl Store {
         self.passwords.is_empty()
     }
 
-    fn remove(&mut self, label: &str) -> bool {
+    fn delete(&mut self, label: &str) -> bool {
         self.passwords.remove(label).is_some()
     }
 }
@@ -78,11 +82,21 @@ pub struct Manager {
     key_cipher: Aes256Gcm,
 }
 
+fn length_validator(inp: &String) -> Result<(), String> {
+    (inp.len() > 8)
+        .then_some(())
+        .ok_or("Password must be longer than 8".into())
+}
+
 impl Manager {
     pub fn new(path: PathBuf) -> Self {
         if path.exists() {
             let store = Store::open(&path);
-            let key = rpassword::prompt_password("Your key: ").unwrap();
+            let key = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Your key")
+                .validate_with(length_validator)
+                .interact()
+                .unwrap();
 
             let mut salted = store.salt.to_vec();
             salted.extend_from_slice(key.as_bytes());
@@ -108,18 +122,21 @@ impl Manager {
             File::create(&path).unwrap();
             println!("Created store file at '{}'", path.display());
 
-            let user_key = rpassword::prompt_password("Enter a key: ").unwrap();
-            let salt: [u8; 16] = rand::random();
+            let user_key = Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Your key")
+                .with_confirmation("Retype key", "Passwords do not match")
+                .interact()
+                .unwrap();
 
+            let salt: [u8; 16] = rand::random();
             let mut salted = salt.to_vec();
             salted.extend_from_slice(user_key.as_bytes());
 
             let cipher_key = Sha256::digest(&salted);
-
             let key_cipher = Aes256Gcm::new(&cipher_key);
+
             let key: [u8; 32] = rand::random();
             let nonce_slice: [u8; 12] = rand::random();
-
             let nonce = Nonce::from_slice(&nonce_slice);
 
             let encrypted_key = key_cipher.encrypt(nonce, &key[..]).unwrap();
@@ -133,9 +150,18 @@ impl Manager {
         }
     }
 
-    pub fn add(&mut self, label: &str, password: &str) {
-        let nonce_slice: [u8; 12] = rand::random();
+    pub fn add(&mut self, label: &str, input: bool, len: usize, special_chars: bool) {
+        let password = if input {
+            Password::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter your password")
+                .validate_with(length_validator)
+                .interact()
+                .unwrap()
+        } else {
+            gen_password(len, special_chars)
+        };
 
+        let nonce_slice: [u8; 12] = rand::random();
         let nonce = Nonce::from_slice(&nonce_slice);
 
         let ciphertext = self
@@ -148,16 +174,19 @@ impl Manager {
                 entry.insert(Record::new(nonce_slice, ciphertext));
             }
             Entry::Occupied(mut entry) => {
-                scan!("Overwrite existing password? (y/n) ", choice);
-                if choice == "y" {
+                if Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Do you want to continue?")
+                    .interact()
+                    .unwrap()
+                {
                     entry.insert(Record::new(nonce_slice, ciphertext));
                 }
             }
         };
     }
 
-    pub fn remove(&mut self, label: &str) {
-        if !self.store.remove(label) {
+    pub fn delete(&mut self, label: &str) {
+        if !self.store.delete(label) {
             println!("No entry found");
         }
     }
@@ -196,7 +225,24 @@ impl Manager {
         t.display();
     }
 
-    pub fn modify(&mut self, new_key: &str) {
+    pub fn reset(&mut self) {
+        if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Do you want to continue?")
+            .interact()
+            .unwrap()
+        {
+            self.store.passwords = HashMap::new();
+        }
+    }
+
+    pub fn modify(&mut self) {
+        let new_key = Password::with_theme(&ColorfulTheme::default())
+            .with_prompt("Enter new key")
+            .with_confirmation("Repeat key", "Error: the keys don't match.")
+            .validate_with(length_validator)
+            .interact()
+            .unwrap();
+
         let enc_key = self
             .key_cipher
             .decrypt(&self.store.nonce.into(), self.store.key.as_slice())
@@ -220,6 +266,26 @@ impl Manager {
 
         self.store.key = new_key;
     }
+
+    pub fn export(&self, format: SupportedFormat, out_file: PathBuf) {
+        let output = match format {
+            SupportedFormat::Json => serde_json::to_string_pretty(&self.store).unwrap(),
+            SupportedFormat::Yaml => serde_yaml::to_string(&self.store).unwrap(),
+            SupportedFormat::Toml => toml::to_string_pretty(&self.store).unwrap(),
+        };
+
+        std::fs::write(out_file, output).unwrap();
+    }
+
+    pub fn import(&mut self, format: SupportedFormat, in_file: PathBuf) {
+        let input = std::fs::read_to_string(in_file).unwrap();
+
+        self.store = match format {
+            SupportedFormat::Json => serde_json::from_str(&input).unwrap(),
+            SupportedFormat::Yaml => serde_yaml::from_str(&input).unwrap(),
+            SupportedFormat::Toml => toml::from_str(&input).unwrap(),
+        };
+    }
 }
 
 impl Drop for Manager {
@@ -228,12 +294,12 @@ impl Drop for Manager {
     }
 }
 
-pub fn gen_password(len: usize, special_chars: bool) -> String {
+fn gen_password(len: usize, special_chars: bool) -> String {
     let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
     let mut rng = rand::thread_rng();
 
-    let subset = &password_charset[..(special_chars.then_some(94).unwrap_or(62))];
-    let password = subset.choose_multiple(&mut rng, len).map(|x| *x).collect();
+    let subset = &password_charset[..(if special_chars { 94 } else { 62 })];
+    let password = subset.choose_multiple(&mut rng, len).copied().collect();
 
     String::from_utf8(password).unwrap()
 }

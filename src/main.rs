@@ -2,47 +2,33 @@ mod cmd;
 mod manager;
 mod table;
 
+use cmd::Subcommand;
+use manager::Manager;
+
 fn main() {
-    let cli: cmd::Command = cmd::from_args();
-    let mut manager = manager::Manager::new(dirs::data_local_dir().unwrap().join("pm.store"));
+    let command = cmd::from_args();
+    let mut manager = Manager::new(dirs::data_local_dir().unwrap().join("pm.store"));
 
-    match cli.subcommand {
-        cmd::Subcommand::Copy(cmd::Copy { label }) => {
-            manager.copy(&label);
-        }
+    match command.subcommand {
+        Subcommand::Copy(cmd::Copy { label }) => manager.copy(&label),
 
-        cmd::Subcommand::Remove(cmd::Remove { label }) => {
-            manager.remove(&label);
-        }
+        Subcommand::Delete(cmd::Delete { label }) => manager.delete(&label),
 
-        cmd::Subcommand::List => {
-            manager.list();
-        }
+        Subcommand::List => manager.list(),
 
-        cmd::Subcommand::New(cmd::New {
+        Subcommand::Add(cmd::Add {
             label,
             input,
             len,
             special_chars,
-        }) => {
-            let password = if input {
-                rpassword::prompt_password("Enter your password: ").unwrap()
-            } else {
-                manager::gen_password(len, special_chars)
-            };
+        }) => manager.add(&label, input, len, special_chars),
 
-            manager.add(&label, &password);
-        }
+        Subcommand::Reset => manager.reset(),
 
-        cmd::Subcommand::Modify => {
-            let new_key = rpassword::prompt_password("Enter new key: ").unwrap();
-            let retyped_new_key = rpassword::prompt_password("Retype new key: ").unwrap();
+        Subcommand::Modify => manager.modify(),
 
-            if new_key != retyped_new_key {
-                println!("New key doesn't match retyped key")
-            } else {
-                manager.modify(&new_key);
-            }
-        }
+        Subcommand::Export(cmd::Export { format, out_file }) => manager.export(format, out_file),
+
+        Subcommand::Import(cmd::Import { format, in_file }) => manager.import(format, in_file),
     }
 }
