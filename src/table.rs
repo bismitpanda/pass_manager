@@ -1,5 +1,7 @@
 use std::io::{BufWriter, Write};
 
+use owo_colors::OwoColorize;
+
 const TOP_LEFT_CORNER: &str = "╭";
 const TOP_RIGHT_CORNER: &str = "╮";
 const BOTTOM_LEFT_CORNER: &str = "╰";
@@ -51,74 +53,101 @@ impl<const N: usize> Table<N> {
 
         let (&last_max, rest_maxes) = self.maxes.split_last().unwrap();
 
-        write!(buf, "{TOP_LEFT_CORNER}").unwrap();
+        write!(buf, "{}", TOP_LEFT_CORNER.bright_yellow()).unwrap();
         for &max in rest_maxes {
             write!(
                 buf,
-                "{}{HORIZONTAL_TOP_JOINT}",
-                HORIZONTAL_BAR.repeat(max + 2)
+                "{}{}",
+                HORIZONTAL_BAR.repeat(max + 2).bright_yellow(),
+                HORIZONTAL_TOP_JOINT.bright_yellow()
             )
             .unwrap();
         }
 
-        writeln!(
+        write!(
             buf,
-            "{:last_max$}{TOP_RIGHT_CORNER}",
-            HORIZONTAL_BAR.repeat(last_max + 2)
+            "{}{}\n{}",
+            HORIZONTAL_BAR.repeat(last_max + 2).bright_yellow(),
+            TOP_RIGHT_CORNER.bright_yellow(),
+            VERTICAL_BAR.bright_yellow()
         )
         .unwrap();
 
-        write!(buf, "{VERTICAL_BAR}").unwrap();
         for (i, data) in self.headers.iter().enumerate() {
-            write!(buf, " {data:^max$} {VERTICAL_BAR}", max = self.maxes[i]).unwrap();
+            write!(
+                buf,
+                " {:^max$} {}",
+                data.bright_cyan(),
+                VERTICAL_BAR.bright_yellow(),
+                max = self.maxes[i]
+            )
+            .unwrap();
         }
-        write!(buf, "\n{VERTICAL_LEFT_JOINT}").unwrap();
+        write!(buf, "\n{}", VERTICAL_LEFT_JOINT.bright_yellow()).unwrap();
         for (j, _) in self.headers.iter().enumerate() {
-            write!(buf, "{}", HORIZONTAL_BAR.repeat(self.maxes[j] + 2)).unwrap();
+            write!(
+                buf,
+                "{}",
+                HORIZONTAL_BAR.repeat(self.maxes[j] + 2).bright_yellow()
+            )
+            .unwrap();
             if j != self.headers.len() - 1 {
-                write!(buf, "{INTERSECTION}").unwrap();
+                write!(buf, "{}", INTERSECTION.bright_yellow()).unwrap();
             }
         }
-        writeln!(buf, "{VERTICAL_RIGHT_JOINT}").unwrap();
+        writeln!(buf, "{}", VERTICAL_RIGHT_JOINT.bright_yellow()).unwrap();
 
         let len = self.rows.len();
 
         for (i, row) in self.rows.iter().enumerate() {
-            write!(buf, "{VERTICAL_BAR}").unwrap();
+            write!(buf, "{}", VERTICAL_BAR.bright_yellow()).unwrap();
             for (i, data) in row.iter().enumerate() {
-                write!(buf, " {data:^max$} {VERTICAL_BAR}", max = self.maxes[i]).unwrap();
+                write!(
+                    buf,
+                    " {data:^max$} {}",
+                    VERTICAL_BAR.bright_yellow(),
+                    max = self.maxes[i]
+                )
+                .unwrap();
             }
             writeln!(buf).unwrap();
             if i != len - 1 {
-                write!(buf, "{VERTICAL_LEFT_JOINT}").unwrap();
+                write!(buf, "{}", VERTICAL_LEFT_JOINT.bright_yellow()).unwrap();
                 let row_len = row.len();
                 for (j, _) in row.iter().enumerate() {
-                    write!(buf, "{}", HORIZONTAL_BAR.repeat(self.maxes[j] + 2)).unwrap();
+                    write!(
+                        buf,
+                        "{}",
+                        HORIZONTAL_BAR.repeat(self.maxes[j] + 2).bright_yellow()
+                    )
+                    .unwrap();
                     if j != row_len - 1 {
-                        write!(buf, "{INTERSECTION}").unwrap();
+                        write!(buf, "{}", INTERSECTION.bright_yellow()).unwrap();
                     }
                 }
-                writeln!(buf, "{VERTICAL_RIGHT_JOINT}").unwrap();
+                writeln!(buf, "{}", VERTICAL_RIGHT_JOINT.bright_yellow()).unwrap();
             }
         }
 
-        write!(buf, "{BOTTOM_LEFT_CORNER}").unwrap();
+        write!(buf, "{}", BOTTOM_LEFT_CORNER.bright_yellow()).unwrap();
         for &max in rest_maxes {
             write!(
                 buf,
-                "{}{HORIZONTAL_BOTTOM_JOINT}",
-                HORIZONTAL_BAR.repeat(max + 2)
+                "{}{}",
+                HORIZONTAL_BAR.repeat(max + 2).bright_yellow(),
+                HORIZONTAL_BOTTOM_JOINT.bright_yellow()
             )
             .unwrap();
         }
 
         writeln!(
             buf,
-            "{:last_max$}{BOTTOM_RIGHT_CORNER}",
-            HORIZONTAL_BAR.repeat(last_max + 2)
+            "{}{}",
+            HORIZONTAL_BAR.repeat(last_max + 2).bright_yellow(),
+            BOTTOM_RIGHT_CORNER.bright_yellow()
         )
         .unwrap();
 
-        println!("{}", String::from_utf8(buf.buffer().to_vec()).unwrap());
+        std::io::stdout().write_all(buf.buffer()).unwrap();
     }
 }

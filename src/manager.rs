@@ -1,4 +1,4 @@
-use std::{fs::File, path::PathBuf};
+use std::{fs::File, io::Read, path::PathBuf};
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -85,7 +85,7 @@ pub struct Manager {
 fn length_validator(inp: &String) -> Result<(), String> {
     (inp.len() > 8)
         .then_some(())
-        .ok_or("Password must be longer than 8".into())
+        .ok_or_else(|| "Password must be longer than 8".into())
 }
 
 impl Manager {
@@ -267,22 +267,33 @@ impl Manager {
         self.store.key = new_key;
     }
 
-    pub fn export(&self, format: SupportedFormat, out_file: PathBuf) {
+    pub fn export(&self, format: SupportedFormat, out_file: Option<PathBuf>) {
         let output = match format {
-            SupportedFormat::Json => serde_json::to_string_pretty(&self.store).unwrap(),
-            SupportedFormat::Yaml => serde_yaml::to_string(&self.store).unwrap(),
+            SupportedFormat::Json => json::to_string_pretty(&self.store).unwrap(),
+            SupportedFormat::Yaml => yaml::to_string(&self.store).unwrap(),
             SupportedFormat::Toml => toml::to_string_pretty(&self.store).unwrap(),
         };
 
-        std::fs::write(out_file, output).unwrap();
+        out_file.map_or_else(
+            || println!("{output}"),
+            |out_file| std::fs::write(out_file, &output).unwrap(),
+        );
     }
 
-    pub fn import(&mut self, format: SupportedFormat, in_file: PathBuf) {
-        let input = std::fs::read_to_string(in_file).unwrap();
+    pub fn import(&mut self, format: SupportedFormat, in_file: Option<PathBuf>) {
+        let input = in_file.map_or_else(
+            || {
+                let mut buf = String::new();
+                std::io::stdin().lock().read_to_string(&mut buf).unwrap();
+
+                buf
+            },
+            |in_file| std::fs::read_to_string(in_file).unwrap(),
+        );
 
         self.store = match format {
-            SupportedFormat::Json => serde_json::from_str(&input).unwrap(),
-            SupportedFormat::Yaml => serde_yaml::from_str(&input).unwrap(),
+            SupportedFormat::Json => json::from_str(&input).unwrap(),
+            SupportedFormat::Yaml => yaml::from_str(&input).unwrap(),
             SupportedFormat::Toml => toml::from_str(&input).unwrap(),
         };
     }

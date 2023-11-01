@@ -1,28 +1,28 @@
 [package]
 name = "pm"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
 aes-gcm = "0.10.3"
+anstyle = "1.0.4"
+clap = { version = "4.4.7", features = ["derive"] }
 clipboard = "0.5.0"
 dialoguer = { version = "0.11.0", default-features = false, features = ["password"] }
 dirs = "5.0.1"
 hashbrown = { version = "0.14.2", features = ["rkyv", "serde"] }
-lexopt = "0.3.0"
+json = { package = "serde_json", version = "1.0.108" }
 owo-colors = "3.5.0"
 rand = "0.8.5"
 rkyv = { version = "0.7.42", features = ["validation"] }
 serde = { version = "1.0.190", features = ["derive"] }
-serde_json = "1.0.108"
 serde_with = { version = "3.4.0", features = ["hex"] }
-serde_yaml = "0.9.27"
 sha2 = "0.10.8"
 toml = "0.8.6"
+yaml = { package = "serde_yaml", version = "0.9.27" }
 
 [profile.release]
 panic = "abort"
 lto = true
 codegen-units = 1
 strip = true
-opt-level = "s"
