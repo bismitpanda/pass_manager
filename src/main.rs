@@ -1,36 +1,51 @@
+#![warn(clippy::pedantic, clippy::nursery, clippy::all)]
+
 mod cmd;
 mod manager;
+mod store;
+mod styles;
 mod table;
 
 use clap::Parser;
 
-use cmd::SubCommand;
+use cmd::{Cli, CliSubcommand, Store, StoreSubcommand};
 use manager::Manager;
 
 fn main() {
-    let command = cmd::Command::parse();
+    let command = Cli::parse();
     let mut manager = Manager::new(dirs::data_local_dir().unwrap().join("pm.store"));
 
     match command.subcommand {
-        SubCommand::Copy { label } => manager.copy(&label),
+        CliSubcommand::Copy { label } => manager.copy(&label),
 
-        SubCommand::Delete { label } => manager.delete(&label),
+        CliSubcommand::Delete { label } => manager.delete(label),
 
-        SubCommand::List => manager.list(),
+        CliSubcommand::Purge { label } => manager.purge(&label),
 
-        SubCommand::Add {
+        CliSubcommand::List { label } => manager.list(label),
+
+        CliSubcommand::Add {
             label,
             input,
             len,
             special_chars,
-        } => manager.add(&label, input, len, special_chars),
+            overwrite,
+        } => manager.add(&label, input, len, special_chars, overwrite),
 
-        SubCommand::Reset => manager.reset(),
+        CliSubcommand::Store(Store { subcommand }) => match subcommand {
+            StoreSubcommand::Reset => manager.reset(),
 
-        SubCommand::Modify => manager.modify(),
+            StoreSubcommand::Modify => manager.modify(),
 
-        SubCommand::Export { format, out_file } => manager.export(format, out_file),
+            StoreSubcommand::Clean => manager.clean(),
 
-        SubCommand::Import { format, in_file } => manager.import(format, in_file),
+            StoreSubcommand::Export {
+                format,
+                out_file,
+                pretty,
+            } => manager.export(format, out_file, pretty),
+
+            StoreSubcommand::Import { format, in_file } => manager.import(format, in_file),
+        },
     }
 }

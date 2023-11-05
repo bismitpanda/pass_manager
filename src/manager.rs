@@ -1,108 +1,52 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{fs::File, path::PathBuf};
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
+use argon2::Argon2;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
-use hashbrown::{hash_map::Entry, HashMap};
+use hashbrown::hash_map::Entry;
+use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
-use serde_with::{formats::Uppercase, hex::Hex, serde_as};
-use sha2::{Digest, Sha256};
 
-use crate::{cmd::SupportedFormat, table::Table};
+use crate::{
+    store::{Item, Record, Store},
+    table::Table,
+};
 
-#[serde_as]
-#[derive(
-    rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, serde::Deserialize, serde::Serialize,
-)]
-#[archive(check_bytes)]
-struct Record {
-    #[serde_as(as = "Hex<Uppercase>")]
-    nonce: [u8; 12],
-    #[serde_as(as = "Hex<Uppercase>")]
-    password: Vec<u8>,
-}
-
-impl Record {
-    fn new(nonce: [u8; 12], password: Vec<u8>) -> Self {
-        Self { nonce, password }
-    }
-}
-
-#[serde_as]
-#[derive(
-    rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, serde::Deserialize, serde::Serialize,
-)]
-#[archive(check_bytes)]
-struct Store {
-    #[serde_as(as = "Hex<Uppercase>")]
-    key: Vec<u8>,
-    #[serde_as(as = "Hex<Uppercase>")]
-    nonce: [u8; 12],
-    #[serde_as(as = "Hex<Uppercase>")]
-    salt: [u8; 16],
-    passwords: HashMap<String, Record>,
-}
-
-impl Store {
-    fn new(key: Vec<u8>, salt: [u8; 16], nonce: [u8; 12]) -> Self {
-        Self {
-            nonce,
-            key,
-            salt,
-            passwords: HashMap::new(),
-        }
-    }
-
-    fn open(path: &PathBuf) -> Self {
-        let buf = std::fs::read(path).unwrap();
-        rkyv::from_bytes::<Self>(&buf).unwrap()
-    }
-
-    fn save(&self, path: &PathBuf) {
-        let data = rkyv::to_bytes::<_, 1024>(self).unwrap();
-        std::fs::write(path, &data).unwrap();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.passwords.is_empty()
-    }
-
-    fn delete(&mut self, label: &str) -> bool {
-        self.passwords.remove(label).is_some()
-    }
-}
+const TIME_FORMAT: &str = "%e %b, %Y %l:%M:%S %P";
 
 pub struct Manager {
-    store: Store,
-    cipher: Aes256Gcm,
-    path: PathBuf,
-    key_cipher: Aes256Gcm,
+    pub store: Store,
+    pub store_cipher: Aes256Gcm,
+    pub bin_path: PathBuf,
+    pub key_cipher: Aes256Gcm,
 }
 
-fn length_validator(inp: &String) -> Result<(), String> {
+pub fn length_validator(inp: &String) -> Result<(), String> {
     (inp.len() > 8)
         .then_some(())
         .ok_or_else(|| "Password must be longer than 8".into())
 }
 
 impl Manager {
-    pub fn new(path: PathBuf) -> Self {
-        if path.exists() {
-            let store = Store::open(&path);
+    pub fn new(bin_path: PathBuf) -> Self {
+        if bin_path.exists() {
+            let store = Store::open(&bin_path);
             let key = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Your key")
                 .validate_with(length_validator)
                 .interact()
                 .unwrap();
 
-            let mut salted = store.salt.to_vec();
-            salted.extend_from_slice(key.as_bytes());
+            let mut derived_key = [0u8; 32];
+            Argon2::default()
+                .hash_password_into(key.as_bytes(), &store.salt, &mut derived_key)
+                .unwrap();
 
-            let cipher_key = Sha256::digest(&salted);
-            let key_cipher = Aes256Gcm::new(cipher_key.as_slice().into());
+            let key_cipher = Aes256Gcm::new(derived_key.as_slice().into());
 
             let key = key_cipher
                 .decrypt(&store.nonce.into(), store.key.as_slice())
@@ -110,17 +54,17 @@ impl Manager {
 
             let key: [u8; 32] = key.as_slice().try_into().unwrap();
 
-            let cipher = Aes256Gcm::new(&key.into());
+            let store_cipher = Aes256Gcm::new(&key.into());
 
             Self {
                 store,
-                cipher,
-                path,
+                store_cipher,
+                bin_path,
                 key_cipher,
             }
         } else {
-            File::create(&path).unwrap();
-            println!("Created store file at '{}'", path.display());
+            File::create(&bin_path).unwrap();
+            println!("Created store file at '{}'", bin_path.display());
 
             let user_key = Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Your key")
@@ -129,11 +73,13 @@ impl Manager {
                 .unwrap();
 
             let salt: [u8; 16] = rand::random();
-            let mut salted = salt.to_vec();
-            salted.extend_from_slice(user_key.as_bytes());
 
-            let cipher_key = Sha256::digest(&salted);
-            let key_cipher = Aes256Gcm::new(&cipher_key);
+            let mut derived_key = [0u8; 32];
+            Argon2::default()
+                .hash_password_into(user_key.as_bytes(), &salt, &mut derived_key)
+                .unwrap();
+
+            let key_cipher = Aes256Gcm::new(&derived_key.into());
 
             let key: [u8; 32] = rand::random();
             let nonce_slice: [u8; 12] = rand::random();
@@ -143,14 +89,21 @@ impl Manager {
 
             Self {
                 store: Store::new(encrypted_key, salt, nonce_slice),
-                cipher: Aes256Gcm::new(&key.into()),
-                path,
+                store_cipher: Aes256Gcm::new(&key.into()),
+                bin_path,
                 key_cipher,
             }
         }
     }
 
-    pub fn add(&mut self, label: &str, input: bool, len: usize, special_chars: bool) {
+    pub fn add(
+        &mut self,
+        label: &str,
+        input: bool,
+        len: usize,
+        special_chars: bool,
+        overwrite: bool,
+    ) {
         let password = if input {
             Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter your password")
@@ -158,46 +111,75 @@ impl Manager {
                 .interact()
                 .unwrap()
         } else {
-            gen_password(len, special_chars)
+            let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+            let mut rng = rand::thread_rng();
+
+            let subset = &password_charset[..(if special_chars { 94 } else { 62 })];
+            let password = subset.choose_multiple(&mut rng, len).copied().collect();
+
+            String::from_utf8(password).unwrap()
         };
 
         let nonce_slice: [u8; 12] = rand::random();
         let nonce = Nonce::from_slice(&nonce_slice);
 
         let ciphertext = self
-            .cipher
+            .store_cipher
             .encrypt(nonce, password.as_bytes().as_ref())
             .unwrap();
 
         match self.store.passwords.entry(label.to_string()) {
             Entry::Vacant(entry) => {
-                entry.insert(Record::new(nonce_slice, ciphertext));
+                entry.insert(Item::new(Record::new(nonce_slice, ciphertext)));
             }
+
             Entry::Occupied(mut entry) => {
-                if Confirm::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Do you want to continue?")
-                    .interact()
-                    .unwrap()
-                {
-                    entry.insert(Record::new(nonce_slice, ciphertext));
+                let confirmed = overwrite
+                    || Confirm::with_theme(&ColorfulTheme::default())
+                        .with_prompt("Do you want to modify?")
+                        .interact()
+                        .unwrap();
+                if confirmed {
+                    let mut records = entry.get().clone();
+                    records.add_record(Record::new(nonce_slice, ciphertext));
+
+                    entry.insert(records);
                 }
             }
         };
     }
 
-    pub fn delete(&mut self, label: &str) {
+    pub fn purge(&mut self, label: &str) {
         if !self.store.delete(label) {
-            println!("No entry found");
+            println!("{}", "No item found".bright_red());
+        }
+    }
+
+    pub fn delete(&mut self, label: String) {
+        match self.store.passwords.entry(label) {
+            Entry::Occupied(mut entry) if !entry.get().is_deleted => {
+                entry.get_mut().is_deleted = true;
+            }
+            Entry::Occupied(_) => println!("{}", "Item already deleted from store".bright_red()),
+            Entry::Vacant(_) => println!("{}", "No item found in store".bright_red()),
         }
     }
 
     pub fn copy(&self, label: &str) {
-        let Some(Record { nonce, password }) = self.store.passwords.get(label) else {
-            return println!("No entry found");
+        let Some(item) = self.store.passwords.get(label) else {
+            return println!("No item found in store");
         };
 
+        if item.is_deleted {
+            return println!("Item is deleted");
+        }
+
+        let Record {
+            nonce, password, ..
+        } = item.curr();
+
         let plaintext = self
-            .cipher
+            .store_cipher
             .decrypt(nonce.into(), password.as_slice())
             .unwrap();
 
@@ -208,109 +190,84 @@ impl Manager {
             .unwrap();
     }
 
-    pub fn list(&self) {
+    pub fn list(&self, label: Option<String>) {
         if self.store.is_empty() {
             return println!("Empty store");
         }
 
-        let mut t = Table::new(["Labels".to_owned(), "Passwords".to_owned()]);
-
-        for (label, Record { nonce, password }) in &self.store.passwords {
-            let nonce = Nonce::from_slice(nonce);
-            let plaintext = self.cipher.decrypt(nonce, password.as_slice()).unwrap();
-
-            t.insert([label.to_owned(), String::from_utf8(plaintext).unwrap()]);
-        }
-
-        t.display();
-    }
-
-    pub fn reset(&mut self) {
-        if Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt("Do you want to continue?")
-            .interact()
-            .unwrap()
-        {
-            self.store.passwords = HashMap::new();
-        }
-    }
-
-    pub fn modify(&mut self) {
-        let new_key = Password::with_theme(&ColorfulTheme::default())
-            .with_prompt("Enter new key")
-            .with_confirmation("Repeat key", "Error: the keys don't match.")
-            .validate_with(length_validator)
-            .interact()
-            .unwrap();
-
-        let enc_key = self
-            .key_cipher
-            .decrypt(&self.store.nonce.into(), self.store.key.as_slice())
-            .unwrap();
-
-        let new_salt: [u8; 16] = rand::random();
-        let new_nonce: [u8; 12] = rand::random();
-
-        self.store.nonce = new_nonce;
-        self.store.salt = new_salt;
-
-        let mut salted = new_salt.to_vec();
-        salted.extend_from_slice(new_key.as_bytes());
-
-        let new_cipher_key = Sha256::digest(&salted);
-        let new_key_cipher = Aes256Gcm::new(&new_cipher_key);
-
-        let new_key = new_key_cipher
-            .encrypt(&new_nonce.into(), enc_key.as_slice())
-            .unwrap();
-
-        self.store.key = new_key;
-    }
-
-    pub fn export(&self, format: SupportedFormat, out_file: Option<PathBuf>) {
-        let output = match format {
-            SupportedFormat::Json => json::to_string_pretty(&self.store).unwrap(),
-            SupportedFormat::Yaml => yaml::to_string(&self.store).unwrap(),
-            SupportedFormat::Toml => toml::to_string_pretty(&self.store).unwrap(),
-        };
-
-        out_file.map_or_else(
-            || println!("{output}"),
-            |out_file| std::fs::write(out_file, &output).unwrap(),
-        );
-    }
-
-    pub fn import(&mut self, format: SupportedFormat, in_file: Option<PathBuf>) {
-        let input = in_file.map_or_else(
+        label.map_or_else(
             || {
-                let mut buf = String::new();
-                std::io::stdin().lock().read_to_string(&mut buf).unwrap();
+                let mut t = Table::new([
+                    "Labels".to_owned(),
+                    "Passwords".to_owned(),
+                    "Last Added".to_owned(),
+                ]);
 
-                buf
+                for (label, item) in &self.store.passwords {
+                    if item.is_deleted {
+                        continue;
+                    }
+
+                    let Record {
+                        nonce,
+                        password,
+                        time,
+                    } = item.curr();
+
+                    let nonce = Nonce::from_slice(nonce);
+                    let plaintext = self
+                        .store_cipher
+                        .decrypt(nonce, password.as_slice())
+                        .unwrap();
+
+                    t.insert([
+                        label.to_owned(),
+                        String::from_utf8(plaintext).unwrap(),
+                        time.format(TIME_FORMAT).to_string(),
+                    ]);
+                }
+
+                t.display();
             },
-            |in_file| std::fs::read_to_string(in_file).unwrap(),
-        );
+            |label| {
+                let Some(item) = self.store.passwords.get(&label) else {
+                    return println!("No item found in store");
+                };
 
-        self.store = match format {
-            SupportedFormat::Json => json::from_str(&input).unwrap(),
-            SupportedFormat::Yaml => yaml::from_str(&input).unwrap(),
-            SupportedFormat::Toml => toml::from_str(&input).unwrap(),
-        };
+                if item.is_deleted {
+                    return println!("Item is deleted");
+                }
+
+                let mut t = Table::new(["Password".to_owned(), "Date Added".to_owned()]);
+
+                println!("Label: {label}\n");
+
+                for Record {
+                    nonce,
+                    password,
+                    time,
+                } in &item.records
+                {
+                    let nonce = Nonce::from_slice(nonce);
+                    let plaintext = self
+                        .store_cipher
+                        .decrypt(nonce, password.as_slice())
+                        .unwrap();
+
+                    t.insert([
+                        String::from_utf8(plaintext).unwrap(),
+                        time.format(TIME_FORMAT).to_string(),
+                    ]);
+                }
+
+                t.display();
+            },
+        );
     }
 }
 
 impl Drop for Manager {
     fn drop(&mut self) {
-        self.store.save(&self.path);
+        self.store.save(&self.bin_path);
     }
-}
-
-fn gen_password(len: usize, special_chars: bool) -> String {
-    let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-    let mut rng = rand::thread_rng();
-
-    let subset = &password_charset[..(if special_chars { 94 } else { 62 })];
-    let password = subset.choose_multiple(&mut rng, len).copied().collect();
-
-    String::from_utf8(password).unwrap()
 }
