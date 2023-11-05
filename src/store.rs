@@ -72,7 +72,7 @@ pub struct Store {
     pub nonce: [u8; 12],
     #[serde_as(as = "Hex<Uppercase>")]
     pub salt: [u8; 16],
-    pub passwords: HashMap<String, Item>,
+    pub items: HashMap<String, Item>,
 }
 
 impl Store {
@@ -81,7 +81,7 @@ impl Store {
             nonce,
             key,
             salt,
-            passwords: HashMap::new(),
+            items: HashMap::new(),
         }
     }
 
@@ -96,11 +96,11 @@ impl Store {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.passwords.is_empty()
+        !self.items.iter().any(|(_, item)| !item.is_deleted)
     }
 
     pub fn delete(&mut self, label: &str) -> bool {
-        self.passwords.remove(label).is_some()
+        self.items.remove(label).is_some()
     }
 }
 
@@ -111,7 +111,7 @@ impl Manager {
             .interact()
             .unwrap()
         {
-            self.store.passwords = HashMap::new();
+            self.store.items = HashMap::new();
         }
     }
 
@@ -203,11 +203,11 @@ impl Manager {
     pub fn clean(&mut self) {
         let not_deleted = self
             .store
-            .passwords
+            .items
             .iter()
             .filter_map(|(k, v)| (!v.is_deleted).then_some((k.clone(), v.clone())))
             .collect::<HashMap<_, _>>();
 
-        self.store.passwords = not_deleted
+        self.store.items = not_deleted;
     }
 }

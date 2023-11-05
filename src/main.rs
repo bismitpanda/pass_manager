@@ -1,4 +1,5 @@
 #![warn(clippy::pedantic, clippy::nursery, clippy::all)]
+#![allow(clippy::unsafe_derive_deserialize)] // To handle unsafe usage in rkyv `from_bytes`
 
 mod cmd;
 mod manager;
@@ -31,6 +32,8 @@ fn main() {
             special_chars,
             overwrite,
         } => manager.add(&label, input, len, special_chars, overwrite),
+
+        CliSubcommand::Restore { label } => manager.restore(&label),
 
         CliSubcommand::Store(Store { subcommand }) => match subcommand {
             StoreSubcommand::Reset => manager.reset(),

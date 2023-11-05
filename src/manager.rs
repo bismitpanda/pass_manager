@@ -128,7 +128,7 @@ impl Manager {
             .encrypt(nonce, password.as_bytes().as_ref())
             .unwrap();
 
-        match self.store.passwords.entry(label.to_string()) {
+        match self.store.items.entry(label.to_string()) {
             Entry::Vacant(entry) => {
                 entry.insert(Item::new(Record::new(nonce_slice, ciphertext)));
             }
@@ -156,7 +156,7 @@ impl Manager {
     }
 
     pub fn delete(&mut self, label: String) {
-        match self.store.passwords.entry(label) {
+        match self.store.items.entry(label) {
             Entry::Occupied(mut entry) if !entry.get().is_deleted => {
                 entry.get_mut().is_deleted = true;
             }
@@ -166,7 +166,7 @@ impl Manager {
     }
 
     pub fn copy(&self, label: &str) {
-        let Some(item) = self.store.passwords.get(label) else {
+        let Some(item) = self.store.items.get(label) else {
             return println!("No item found in store");
         };
 
@@ -203,11 +203,7 @@ impl Manager {
                     "Last Added".to_owned(),
                 ]);
 
-                for (label, item) in &self.store.passwords {
-                    if item.is_deleted {
-                        continue;
-                    }
-
+                for (label, item) in self.store.items.iter().filter(|&(_, v)| !v.is_deleted) {
                     let Record {
                         nonce,
                         password,
@@ -230,7 +226,7 @@ impl Manager {
                 t.display();
             },
             |label| {
-                let Some(item) = self.store.passwords.get(&label) else {
+                let Some(item) = self.store.items.get(&label) else {
                     return println!("No item found in store");
                 };
 
@@ -263,6 +259,18 @@ impl Manager {
                 t.display();
             },
         );
+    }
+
+    pub fn restore(&mut self, label: &str) {
+        let Some(item) = self.store.items.get_mut(label) else {
+            return println!("{}", "No item found in store".bright_red());
+        };
+
+        if !item.is_deleted {
+            return println!("{}", "Item is not deleted from store".bright_yellow());
+        }
+
+        item.is_deleted = false;
     }
 }
 
