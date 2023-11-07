@@ -1,6 +1,4 @@
-use std::{fmt::Display, path::PathBuf};
-
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 use crate::styles::STYLES;
 
@@ -11,6 +9,27 @@ use crate::styles::STYLES;
 pub struct Cli {
     #[command(subcommand)]
     pub subcommand: CliSubcommand,
+}
+
+impl Cli {
+    pub fn to_message(&self) -> String {
+        match self.subcommand {
+            CliSubcommand::Add { ref label, .. } => format!("add {label}"),
+            CliSubcommand::Delete { ref label } => {
+                format!("add {label}")
+            }
+
+            CliSubcommand::Store(ref store) => format!(
+                "store {}",
+                match store.subcommand {
+                    StoreSubcommand::Modify => "modify",
+                    StoreSubcommand::Reset => "reset",
+                }
+            ),
+
+            _ => String::new(),
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -38,16 +57,9 @@ pub enum CliSubcommand {
         label: String,
     },
 
-    /// Soft delete an item from the store
+    /// Delete an item from the store
     #[command(visible_aliases = ["dlt", "rm"])]
     Delete {
-        /// label of the item
-        label: String,
-    },
-
-    /// Hard delete an item from the store
-    #[command(visible_alias = "prg")]
-    Purge {
         /// label of the item
         label: String,
     },
@@ -62,12 +74,6 @@ pub enum CliSubcommand {
     /// List all available items in the store
     #[command(visible_alias = "ls")]
     List,
-
-    /// Restore a deleted item
-    Restore {
-        /// label of the item to restore
-        label: String,
-    },
 
     /// Subcommands concerning the store
     #[command(visible_alias = "str")]
@@ -89,55 +95,4 @@ pub enum StoreSubcommand {
     /// Modify the user key used
     #[command(visible_aliases = ["md", "mv"])]
     Modify,
-
-    /// Clean up the soft deleted items of the store
-    Clean,
-
-    /// Export the store for storage across multiple devices
-    Export {
-        /// format to export
-        #[arg(long, short, value_enum)]
-        format: SupportedFormat,
-
-        /// file path to write output
-        ///
-        /// writes to stdout by default
-        #[arg(long, short, value_name = "FILE")]
-        out_file: Option<PathBuf>,
-
-        /// use prettified output
-        #[arg(long, short)]
-        pretty: bool,
-    },
-
-    /// Import the store from an exported store file
-    Import {
-        /// format to import
-        #[arg(long, short, value_enum)]
-        format: SupportedFormat,
-
-        /// file path to read input
-        ///
-        /// reads from stdin by default
-        #[arg(long, short, value_name = "FILE")]
-        in_file: Option<PathBuf>,
-    },
-}
-
-#[derive(Default, Clone, Copy, ValueEnum)]
-pub enum SupportedFormat {
-    #[default]
-    Json,
-    Toml,
-    Yaml,
-    Ron,
-}
-
-impl Display for SupportedFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.to_possible_value()
-            .expect("no values are skipped")
-            .get_name()
-            .fmt(f)
-    }
 }

@@ -1,5 +1,5 @@
 #![warn(clippy::pedantic, clippy::nursery, clippy::all)]
-#![allow(clippy::unsafe_derive_deserialize)] // To handle unsafe usage in rkyv `from_bytes`
+#![allow(clippy::unsafe_derive_deserialize)] // To handle unsafe usage in rkyv `from_bytes_unchecked`
 
 mod cmd;
 mod manager;
@@ -8,20 +8,23 @@ mod styles;
 mod table;
 
 use clap::Parser;
-
-use cmd::{Cli, CliSubcommand, Store, StoreSubcommand};
 use manager::Manager;
+
+use crate::cmd::{Cli, CliSubcommand, Store, StoreSubcommand};
 
 fn main() {
     let command = Cli::parse();
-    let mut manager = Manager::new(dirs::data_local_dir().unwrap().join("pm.store"));
+    let mut manager = Manager::new(dirs::data_local_dir().unwrap().join("PassManager"));
 
-    match command.subcommand {
-        CliSubcommand::Copy { label } => manager.copy(&label),
+    let mut files_dirty = false;
 
-        CliSubcommand::Delete { label } => manager.delete(label),
+    match &command.subcommand {
+        CliSubcommand::Copy { label } => manager.copy(label),
 
-        CliSubcommand::Purge { label } => manager.purge(&label),
+        CliSubcommand::Delete { label } => {
+            manager.delete(label);
+            files_dirty = true;
+        }
 
         CliSubcommand::List => manager.list(),
 
@@ -31,24 +34,22 @@ fn main() {
             len,
             special_chars,
             overwrite,
-        } => manager.add(&label, input, len, special_chars, overwrite),
+        } => {
+            manager.add(label, *input, *len, *special_chars, *overwrite);
+            files_dirty = true;
+        }
 
-        CliSubcommand::Restore { label } => manager.restore(&label),
+        CliSubcommand::Store(Store { subcommand }) => {
+            match subcommand {
+                StoreSubcommand::Reset => manager.reset(),
 
-        CliSubcommand::Store(Store { subcommand }) => match subcommand {
-            StoreSubcommand::Reset => manager.reset(),
+                StoreSubcommand::Modify => manager.modify(),
+            };
+            files_dirty = true;
+        }
+    }
 
-            StoreSubcommand::Modify => manager.modify(),
-
-            StoreSubcommand::Clean => manager.clean(),
-
-            StoreSubcommand::Export {
-                format,
-                out_file,
-                pretty,
-            } => manager.export(format, out_file, pretty),
-
-            StoreSubcommand::Import { format, in_file } => manager.import(format, in_file),
-        },
+    if files_dirty {
+        manager.cleanup(&command.to_message());
     }
 }
