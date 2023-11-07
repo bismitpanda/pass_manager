@@ -19,7 +19,6 @@ use crate::{
     rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, serde::Deserialize, serde::Serialize, Clone,
 )]
 pub struct Record {
-    pub time: chrono::DateTime<chrono::Local>,
     #[serde_as(as = "Hex<Uppercase>")]
     pub nonce: [u8; 12],
     #[serde_as(as = "Hex<Uppercase>")]
@@ -28,11 +27,7 @@ pub struct Record {
 
 impl Record {
     pub fn new(nonce: [u8; 12], password: Vec<u8>) -> Self {
-        Self {
-            time: chrono::Local::now(),
-            nonce,
-            password,
-        }
+        Self { nonce, password }
     }
 }
 
@@ -41,23 +36,15 @@ impl Record {
 )]
 pub struct Item {
     pub is_deleted: bool,
-    pub records: Vec<Record>,
+    pub record: Record,
 }
 
 impl Item {
     pub fn new(record: Record) -> Self {
         Self {
             is_deleted: false,
-            records: vec![record],
+            record,
         }
-    }
-
-    pub fn add_record(&mut self, record: Record) {
-        self.records.push(record);
-    }
-
-    pub fn curr(&self) -> &Record {
-        self.records.last().unwrap()
     }
 }
 

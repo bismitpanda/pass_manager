@@ -59,12 +59,9 @@ pub enum CliSubcommand {
         label: String,
     },
 
-    /// List all available items or the records of an specified item
+    /// List all available items in the store
     #[command(visible_alias = "ls")]
-    List {
-        /// label of the item to show
-        label: Option<String>,
-    },
+    List,
 
     /// Restore a deleted item
     Restore {

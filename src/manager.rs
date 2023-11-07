@@ -16,8 +16,6 @@ use crate::{
     table::Table,
 };
 
-const TIME_FORMAT: &str = "%e %b, %Y %l:%M:%S %P";
-
 pub struct Manager {
     pub store: Store,
     pub store_cipher: Aes256Gcm,
@@ -140,10 +138,7 @@ impl Manager {
                         .interact()
                         .unwrap();
                 if confirmed {
-                    let mut records = entry.get().clone();
-                    records.add_record(Record::new(nonce_slice, ciphertext));
-
-                    entry.insert(records);
+                    entry.insert(Item::new(Record::new(nonce_slice, ciphertext)));
                 }
             }
         };
@@ -176,7 +171,7 @@ impl Manager {
 
         let Record {
             nonce, password, ..
-        } = item.curr();
+        } = &item.record;
 
         let plaintext = self
             .store_cipher
@@ -190,75 +185,26 @@ impl Manager {
             .unwrap();
     }
 
-    pub fn list(&self, label: Option<String>) {
+    pub fn list(&self) {
         if self.store.is_empty() {
             return println!("Empty store");
         }
 
-        label.map_or_else(
-            || {
-                let mut t = Table::new([
-                    "Labels".to_owned(),
-                    "Passwords".to_owned(),
-                    "Last Added".to_owned(),
-                ]);
+        let mut t = Table::new(["Labels".to_owned(), "Passwords".to_owned()]);
 
-                for (label, item) in self.store.items.iter().filter(|&(_, v)| !v.is_deleted) {
-                    let Record {
-                        nonce,
-                        password,
-                        time,
-                    } = item.curr();
+        for (label, item) in self.store.items.iter().filter(|&(_, v)| !v.is_deleted) {
+            let Record { nonce, password } = &item.record;
 
-                    let nonce = Nonce::from_slice(nonce);
-                    let plaintext = self
-                        .store_cipher
-                        .decrypt(nonce, password.as_slice())
-                        .unwrap();
+            let nonce = Nonce::from_slice(nonce);
+            let plaintext = self
+                .store_cipher
+                .decrypt(nonce, password.as_slice())
+                .unwrap();
 
-                    t.insert([
-                        label.to_owned(),
-                        String::from_utf8(plaintext).unwrap(),
-                        time.format(TIME_FORMAT).to_string(),
-                    ]);
-                }
+            t.insert([label.to_owned(), String::from_utf8(plaintext).unwrap()]);
+        }
 
-                t.display();
-            },
-            |label| {
-                let Some(item) = self.store.items.get(&label) else {
-                    return println!("No item found in store");
-                };
-
-                if item.is_deleted {
-                    return println!("Item is deleted");
-                }
-
-                let mut t = Table::new(["Password".to_owned(), "Date Added".to_owned()]);
-
-                println!("Label: {label}\n");
-
-                for Record {
-                    nonce,
-                    password,
-                    time,
-                } in &item.records
-                {
-                    let nonce = Nonce::from_slice(nonce);
-                    let plaintext = self
-                        .store_cipher
-                        .decrypt(nonce, password.as_slice())
-                        .unwrap();
-
-                    t.insert([
-                        String::from_utf8(plaintext).unwrap(),
-                        time.format(TIME_FORMAT).to_string(),
-                    ]);
-                }
-
-                t.display();
-            },
-        );
+        t.display();
     }
 
     pub fn restore(&mut self, label: &str) {

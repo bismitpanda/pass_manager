@@ -23,7 +23,7 @@ fn main() {
 
         CliSubcommand::Purge { label } => manager.purge(&label),
 
-        CliSubcommand::List { label } => manager.list(label),
+        CliSubcommand::List => manager.list(),
 
         CliSubcommand::Add {
             label,
