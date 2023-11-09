@@ -55,6 +55,8 @@ fn main() {
                 remote,
             } => manager.set_user(name, email, remote),
         },
+
+        CliSubcommand::Initialize => {}
     }
 
     manager.save(&command.to_message());

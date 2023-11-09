@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use owo_colors::OwoColorize;
 use regex::Regex;
+use url::Url;
 
 use crate::manager::Manager;
 
@@ -27,11 +28,15 @@ impl User {
     }
 }
 
-pub fn validate_email(inp: &str) -> Result<(), String> {
+pub fn validate_email(inp: &String) -> Result<(), String> {
     let re = Regex::new(EMAIL_RE).map_err(|err| err.to_string())?;
     re.is_match(inp)
         .then_some(())
         .ok_or_else(|| "invalid email address".to_string())
+}
+
+pub fn validate_url(inp: &String) -> Result<(), String> {
+    Url::parse(inp).map(|_| ()).map_err(|err| err.to_string())
 }
 
 impl Manager {

@@ -15,7 +15,7 @@ use rand::seq::SliceRandom;
 use crate::{
     store::{Item, Store},
     table::Table,
-    user::{validate_email, User},
+    user::{validate_email, validate_url, User},
 };
 
 pub struct Manager {
@@ -112,7 +112,7 @@ impl Manager {
 
         let encrypted_key = key_aes.encrypt(nonce, &key[..]).unwrap();
 
-        let username = Input::with_theme(&ColorfulTheme::default())
+        let name = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter username")
             .default(whoami::realname())
             .interact()
@@ -120,7 +120,7 @@ impl Manager {
 
         let email = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter email")
-            .validate_with(|inp: &String| validate_email(inp))
+            .validate_with(validate_email)
             .interact()
             .unwrap();
 
@@ -131,7 +131,7 @@ impl Manager {
         {
             let url = Input::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter remote url")
-                .validate_with(|inp: &String| validate_email(inp))
+                .validate_with(validate_url)
                 .interact()
                 .unwrap();
 
@@ -141,7 +141,7 @@ impl Manager {
         };
 
         let user = User {
-            name: username,
+            name,
             email,
             remote,
         };

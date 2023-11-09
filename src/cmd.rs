@@ -15,6 +15,7 @@ impl Cli {
     pub fn to_message(&self) -> String {
         match &self.subcommand {
             CliSubcommand::List
+            | CliSubcommand::Initialize
             | CliSubcommand::Copy { .. }
             | CliSubcommand::User(User {
                 subcommand: UserSubcommand::Get,
@@ -98,6 +99,9 @@ pub enum CliSubcommand {
     /// List all available items in the store
     #[command(visible_alias = "ls")]
     List,
+
+    /// Initialize the store
+    Initialize,
 
     /// Subcommands concerning the store
     Store(Store),

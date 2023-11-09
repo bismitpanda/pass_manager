@@ -121,17 +121,26 @@ impl Manager {
         };
 
         let mut remote = self.repo.find_remote("origin").unwrap();
-        remote.connect(Direction::Push).unwrap();
 
         let mut push_options = PushOptions::new();
 
-        let mut callbacks = RemoteCallbacks::new();
-        callbacks.credentials(|_, _, _| {
+        let mut push_callbacks = RemoteCallbacks::new();
+        push_callbacks.credentials(|_, _, _| {
             let cred = get_remote_credentials(&get_host_from_url(url));
             Cred::userpass_plaintext(&cred["username"], &cred["password"])
         });
 
-        push_options.remote_callbacks(callbacks);
+        let mut conn_callbacks = RemoteCallbacks::new();
+        conn_callbacks.credentials(|_, _, _| {
+            let cred = get_remote_credentials(&get_host_from_url(url));
+            Cred::userpass_plaintext(&cred["username"], &cred["password"])
+        });
+
+        remote
+            .connect_auth(Direction::Push, Some(conn_callbacks), None)
+            .unwrap();
+
+        push_options.remote_callbacks(push_callbacks);
 
         remote
             .push(
@@ -144,7 +153,7 @@ impl Manager {
 
 fn get_remote_credentials(host: &str) -> HashMap<String, String> {
     let command = Command::new("git")
-        .args(&["credential", "fill"])
+        .args(["credential", "fill"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -153,7 +162,7 @@ fn get_remote_credentials(host: &str) -> HashMap<String, String> {
     command
         .stdin
         .unwrap()
-        .write_all(format!("protocol=https\nhost={}", host).as_bytes())
+        .write_all(format!("protocol=https\nhost={host}").as_bytes())
         .unwrap();
 
     let mut s = String::new();
@@ -161,7 +170,7 @@ fn get_remote_credentials(host: &str) -> HashMap<String, String> {
 
     let mut config = HashMap::new();
 
-    for line in s.split_terminator("\n") {
+    for line in s.split_terminator('\n') {
         let (k, v) = line.split_once('=').unwrap();
         config.insert(k.into(), v.into());
     }
