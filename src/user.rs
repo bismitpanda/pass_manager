@@ -28,6 +28,7 @@ impl User {
     }
 }
 
+#[allow(clippy::ptr_arg)]
 pub fn validate_email(inp: &String) -> Result<(), String> {
     let re = Regex::new(EMAIL_RE).map_err(|err| err.to_string())?;
     re.is_match(inp)
@@ -35,6 +36,7 @@ pub fn validate_email(inp: &String) -> Result<(), String> {
         .ok_or_else(|| "invalid email address".to_string())
 }
 
+#[allow(clippy::ptr_arg)]
 pub fn validate_url(inp: &String) -> Result<(), String> {
     Url::parse(inp).map(|_| ()).map_err(|err| err.to_string())
 }
@@ -73,11 +75,14 @@ impl Manager {
         }
 
         if let Some(remote) = remote {
+            if self.repo.find_remote("origin").is_ok() {
+                self.repo.remote_set_url("origin", remote).unwrap();
+            } else {
+                self.repo.remote("origin", remote).unwrap();
+            }
+
             self.repo.remote_set_url("origin", remote).unwrap();
             self.user.remote = Some(remote.clone());
-        } else {
-            self.repo.remote_delete("origin").unwrap();
-            self.user.remote = None;
         }
 
         self.user_dirty = true;
