@@ -1,4 +1,8 @@
-use std::path::PathBuf;
+use std::{
+    io::prelude::*,
+    path::PathBuf,
+    process::{Command, Stdio},
+};
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -6,11 +10,14 @@ use aes_gcm::{
 };
 use argon2::Argon2;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
+use git2::{Cred, Direction, PushOptions, RemoteCallbacks};
 use hashbrown::HashMap;
+use url::Url;
 
 use crate::manager::{length_validator, Manager};
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[archive(check_bytes)]
 pub struct Item {
     pub nonce: [u8; 12],
     pub password: Vec<u8>,
@@ -23,6 +30,7 @@ impl Item {
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[archive(check_bytes)]
 pub struct Store {
     pub key: Vec<u8>,
     pub nonce: [u8; 12],
@@ -42,7 +50,7 @@ impl Store {
 
     pub fn open(path: &PathBuf) -> Self {
         let buf = std::fs::read(path).unwrap();
-        unsafe { rkyv::from_bytes_unchecked::<Self>(&buf).unwrap() }
+        rkyv::from_bytes::<Self>(&buf).unwrap()
     }
 
     pub fn save(&self, path: &PathBuf) {
@@ -68,6 +76,8 @@ impl Manager {
         {
             self.store.items = HashMap::new();
         }
+
+        self.store_dirty = true;
     }
 
     pub fn modify(&mut self) {
@@ -101,5 +111,66 @@ impl Manager {
             .unwrap();
 
         self.store.key = new_key;
+
+        self.store_dirty = true;
     }
+
+    pub fn sync(&self) {
+        let Some(url) = &self.user.remote else {
+            return println!("Remote not set");
+        };
+
+        let mut remote = self.repo.find_remote("origin").unwrap();
+        remote.connect(Direction::Push).unwrap();
+
+        let mut push_options = PushOptions::new();
+
+        let mut callbacks = RemoteCallbacks::new();
+        callbacks.credentials(|_, _, _| {
+            let cred = get_remote_credentials(&get_host_from_url(url));
+            Cred::userpass_plaintext(&cred["username"], &cred["password"])
+        });
+
+        push_options.remote_callbacks(callbacks);
+
+        remote
+            .push(
+                &["refs/heads/master:refs/heads/master"],
+                Some(&mut push_options),
+            )
+            .unwrap();
+    }
+}
+
+fn get_remote_credentials(host: &str) -> HashMap<String, String> {
+    let command = Command::new("git")
+        .args(&["credential", "fill"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    command
+        .stdin
+        .unwrap()
+        .write_all(format!("protocol=https\nhost={}", host).as_bytes())
+        .unwrap();
+
+    let mut s = String::new();
+    command.stdout.unwrap().read_to_string(&mut s).unwrap();
+
+    let mut config = HashMap::new();
+
+    for line in s.split_terminator("\n") {
+        let (k, v) = line.split_once('=').unwrap();
+        config.insert(k.into(), v.into());
+    }
+
+    config
+}
+
+fn get_host_from_url(url: &str) -> String {
+    let url = Url::parse(url).unwrap();
+
+    url.host_str().unwrap().to_string()
 }

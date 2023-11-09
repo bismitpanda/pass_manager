@@ -1,6 +1,6 @@
 [package]
 name = "pm"
-version = "0.6.0"
+version = "0.6.2"
 edition = "2021"
 
 [dependencies]
@@ -16,7 +16,8 @@ hashbrown = { version = "0.14.2", features = ["rkyv", "serde"] }
 owo-colors = "3.5.0"
 rand = "0.8.5"
 regex = "1.10.2"
-rkyv = "0.7.42"
+rkyv = { version = "0.7.42", features = ["validation"] }
+url = "2.4.1"
 whoami = { version = "1.4.1", default-features = false }
 
 [profile.release]

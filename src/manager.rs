@@ -11,41 +11,25 @@ use git2::{ObjectType, Repository, Signature};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
-use regex::Regex;
 
 use crate::{
     store::{Item, Store},
     table::Table,
+    user::{validate_email, User},
 };
 
-const EMAIL_RE: &str = r"^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$";
-
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-pub struct User {
-    name: String,
-    email: String,
-    remote: Option<String>,
-}
-
-impl User {
-    pub fn open(path: &PathBuf) -> Self {
-        let buf = std::fs::read(path).unwrap();
-        unsafe { rkyv::from_bytes_unchecked::<Self>(&buf).unwrap() }
-    }
-
-    pub fn save(&self, path: &PathBuf) {
-        let data = rkyv::to_bytes::<_, 1024>(self).unwrap();
-        std::fs::write(path, &data).unwrap();
-    }
-}
-
 pub struct Manager {
-    pub store: Store,
-    pub store_aes: Aes256Gcm,
-    pub data_dir: PathBuf,
-    pub key_aes: Aes256Gcm,
     pub repo: Repository,
+    pub data_dir: PathBuf,
+
+    pub key_aes: Aes256Gcm,
+    pub store_aes: Aes256Gcm,
+
+    pub store: Store,
     pub user: User,
+
+    pub store_dirty: bool,
+    pub user_dirty: bool,
 }
 
 pub fn length_validator(inp: &String) -> Result<(), String> {
@@ -54,8 +38,8 @@ pub fn length_validator(inp: &String) -> Result<(), String> {
         .ok_or_else(|| "Password must be longer than 8".into())
 }
 
-const STORE_BIN: &str = "pm_store.bin";
-const USER_BIN: &str = "user.bin";
+const STORE_BIN_PATH: &str = "pm_store.bin";
+const USER_BIN_PATH: &str = "user.bin";
 
 impl Manager {
     pub fn new(data_dir: PathBuf) -> Self {
@@ -67,7 +51,7 @@ impl Manager {
     }
 
     pub fn open(data_dir: PathBuf) -> Self {
-        let store = Store::open(&data_dir.join(STORE_BIN));
+        let store = Store::open(&data_dir.join(STORE_BIN_PATH));
         let key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Your key")
             .validate_with(length_validator)
@@ -90,7 +74,7 @@ impl Manager {
         let store_cipher = Aes256Gcm::new(&key.into());
 
         let repo = Repository::open(&data_dir).unwrap();
-        let user = User::open(&data_dir.join(USER_BIN));
+        let user = User::open(&data_dir.join(USER_BIN_PATH));
 
         Self {
             store,
@@ -99,6 +83,8 @@ impl Manager {
             key_aes: key_cipher,
             repo,
             user,
+            store_dirty: false,
+            user_dirty: false,
         }
     }
 
@@ -128,36 +114,53 @@ impl Manager {
 
         let username = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter username")
-            .with_initial_text(&whoami::realname())
+            .default(whoami::realname())
             .interact()
             .unwrap();
 
         let email = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter email")
-            .validate_with(|inp: &String| -> Result<(), String> {
-                let re = Regex::new(EMAIL_RE).map_err(|err| err.to_string())?;
-                re.is_match(inp)
-                    .then_some(())
-                    .ok_or_else(|| "invalid email address".to_string())
-            })
+            .validate_with(|inp: &String| validate_email(inp))
             .interact()
             .unwrap();
+
+        let remote = if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Do you want to enter a remote service")
+            .interact()
+            .unwrap()
+        {
+            let url = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter remote url")
+                .validate_with(|inp: &String| validate_email(inp))
+                .interact()
+                .unwrap();
+
+            Some(url)
+        } else {
+            None
+        };
 
         let user = User {
             name: username,
             email,
-            remote: None,
+            remote,
         };
 
         let store = Store::new(encrypted_key, salt, nonce_slice);
 
-        user.save(&data_dir.join(USER_BIN));
-        store.save(&data_dir.join(STORE_BIN));
+        user.save(&data_dir.join(USER_BIN_PATH));
+        store.save(&data_dir.join(STORE_BIN_PATH));
 
         let repo = Repository::init(&data_dir).unwrap();
+
+        if let Some(remote) = &user.remote {
+            repo.remote("origin", remote).unwrap();
+        }
+
         let mut index = repo.index().unwrap();
-        index.add_path(Path::new(STORE_BIN)).unwrap();
-        index.add_path(Path::new(USER_BIN)).unwrap();
+
+        index.add_path(Path::new(STORE_BIN_PATH)).unwrap();
+        index.add_path(Path::new(USER_BIN_PATH)).unwrap();
 
         let oid = index.write_tree().unwrap();
         let signature = Signature::now(&user.name, &user.email).unwrap();
@@ -179,9 +182,13 @@ impl Manager {
             key_aes,
             repo,
             user,
+            store_dirty: false,
+            user_dirty: false,
         }
     }
+}
 
+impl Manager {
     pub fn add(
         &mut self,
         label: &str,
@@ -230,12 +237,16 @@ impl Manager {
                 }
             }
         };
+
+        self.store_dirty = true;
     }
 
     pub fn delete(&mut self, label: &str) {
         if self.store.items.remove(label).is_none() {
             println!("{}", "No item found in store".bright_red());
         }
+
+        self.store_dirty = true;
     }
 
     pub fn copy(&self, label: &str) {
@@ -277,10 +288,25 @@ impl Manager {
 
         t.display();
     }
+}
 
-    pub fn cleanup(&mut self, message: &str) {
+impl Manager {
+    pub fn save(&self, message: &str) {
+        if !(self.store_dirty || self.user_dirty) {
+            return;
+        }
+
         let mut index = self.repo.index().unwrap();
-        index.add_path(Path::new(STORE_BIN)).unwrap();
+
+        if self.store_dirty {
+            self.store.save(&self.data_dir.join(STORE_BIN_PATH));
+            index.add_path(Path::new(STORE_BIN_PATH)).unwrap();
+        }
+
+        if self.user_dirty {
+            self.user.save(&self.data_dir.join(USER_BIN_PATH));
+            index.add_path(Path::new(USER_BIN_PATH)).unwrap();
+        }
 
         let oid = index.write_tree().unwrap();
         let signature = Signature::now(&self.user.name, &self.user.email).unwrap();
@@ -306,7 +332,5 @@ impl Manager {
                 &[&parent_commit],
             )
             .unwrap();
-
-        self.store.save(&self.data_dir.join(STORE_BIN));
     }
 }

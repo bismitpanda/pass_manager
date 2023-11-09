@@ -13,7 +13,16 @@ pub struct Cli {
 
 impl Cli {
     pub fn to_message(&self) -> String {
-        match self.subcommand {
+        match &self.subcommand {
+            CliSubcommand::List
+            | CliSubcommand::Copy { .. }
+            | CliSubcommand::User(User {
+                subcommand: UserSubcommand::Get,
+            })
+            | CliSubcommand::Store(Store {
+                subcommand: StoreSubcommand::Sync,
+            }) => String::new(),
+
             CliSubcommand::Add { ref label, .. } => format!("add {label}"),
             CliSubcommand::Delete { ref label } => {
                 format!("add {label}")
@@ -24,10 +33,25 @@ impl Cli {
                 match store.subcommand {
                     StoreSubcommand::Modify => "modify",
                     StoreSubcommand::Reset => "reset",
+                    StoreSubcommand::Sync => unreachable!(),
                 }
             ),
 
-            _ => String::new(),
+            CliSubcommand::User(User {
+                subcommand:
+                    UserSubcommand::Set {
+                        name,
+                        email,
+                        remote,
+                    },
+            }) => {
+                let fields = [("name", name), ("email", email), ("remote", remote)]
+                    .iter()
+                    .filter_map(|(name, el)| el.is_some().then_some(*name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("user set {fields}")
+            }
         }
     }
 }
@@ -76,8 +100,10 @@ pub enum CliSubcommand {
     List,
 
     /// Subcommands concerning the store
-    #[command(visible_alias = "str")]
     Store(Store),
+
+    /// Subcommands concerning user
+    User(User),
 }
 
 #[derive(Parser)]
@@ -95,4 +121,35 @@ pub enum StoreSubcommand {
     /// Modify the user key used
     #[command(visible_aliases = ["md", "mv"])]
     Modify,
+
+    /// Sync to remote repository
+    Sync,
+}
+
+#[derive(Parser)]
+pub struct User {
+    #[command(subcommand)]
+    pub subcommand: UserSubcommand,
+}
+
+#[derive(Subcommand)]
+pub enum UserSubcommand {
+    /// Get user details
+    Get,
+
+    /// Set/modify user values
+    #[group(multiple = true, required = true)]
+    Set {
+        /// set the name of user
+        #[arg(long, short)]
+        name: Option<String>,
+
+        /// set the email of user
+        #[arg(long, short)]
+        email: Option<String>,
+
+        /// set the remote endpoint of user
+        #[arg(long, short)]
+        remote: Option<String>,
+    },
 }
