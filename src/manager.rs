@@ -13,6 +13,7 @@ use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
 
 use crate::{
+    error::Result,
     store::{Item, Store},
     table::Table,
     user::{validate_email, validate_url, User},
@@ -27,22 +28,23 @@ pub struct Manager {
 
     pub store: Store,
     pub user: User,
+    pub user_nonce: [u8; 12],
 
     pub store_dirty: bool,
     pub user_dirty: bool,
 }
 
-pub fn length_validator(inp: &String) -> Result<(), String> {
+pub fn length_validator(inp: &str) -> Result<(), String> {
     (inp.len() > 8)
         .then_some(())
-        .ok_or_else(|| "Password must be longer than 8".into())
+        .ok_or_else(|| "Password must be longer than 8".to_string())
 }
 
 const STORE_BIN_PATH: &str = "pm_store.bin";
 const USER_BIN_PATH: &str = "user.bin";
 
 impl Manager {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf) -> Result<Self> {
         if data_dir.exists() {
             Self::open(data_dir)
         } else {
@@ -50,59 +52,52 @@ impl Manager {
         }
     }
 
-    pub fn open(data_dir: PathBuf) -> Self {
-        let store = Store::open(&data_dir.join(STORE_BIN_PATH));
+    pub fn open(data_dir: PathBuf) -> Result<Self> {
+        let store = Store::open(&data_dir.join(STORE_BIN_PATH))?;
         let key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Your key")
-            .validate_with(length_validator)
-            .interact()
-            .unwrap();
+            .validate_with(|inp: &String| length_validator(inp))
+            .interact()?;
 
         let mut derived_key = [0u8; 32];
-        Argon2::default()
-            .hash_password_into(key.as_bytes(), &store.salt, &mut derived_key)
-            .unwrap();
+        Argon2::default().hash_password_into(key.as_bytes(), &store.salt, &mut derived_key)?;
 
-        let key_cipher = Aes256Gcm::new(derived_key.as_slice().into());
+        let key_aes = Aes256Gcm::new(derived_key.as_slice().into());
 
-        let key = key_cipher
-            .decrypt(&store.nonce.into(), store.key.as_slice())
-            .unwrap();
+        let key = key_aes.decrypt(&store.nonce.into(), store.key.as_slice())?;
 
-        let key: [u8; 32] = key.as_slice().try_into().unwrap();
+        let key: [u8; 32] = key.as_slice().try_into()?;
 
-        let store_cipher = Aes256Gcm::new(&key.into());
+        let store_aes = Aes256Gcm::new(&key.into());
 
-        let repo = Repository::open(&data_dir).unwrap();
-        let user = User::open(&data_dir.join(USER_BIN_PATH));
+        let repo = Repository::open(&data_dir)?;
+        let (user_nonce, user) = User::open(&data_dir.join(USER_BIN_PATH), &store_aes)?;
 
-        Self {
+        Ok(Self {
             store,
-            store_aes: store_cipher,
+            store_aes,
             data_dir,
-            key_aes: key_cipher,
+            key_aes,
             repo,
             user,
+            user_nonce,
             store_dirty: false,
             user_dirty: false,
-        }
+        })
     }
 
-    pub fn create(data_dir: PathBuf) -> Self {
-        std::fs::create_dir(&data_dir).unwrap();
+    pub fn create(data_dir: PathBuf) -> Result<Self> {
+        std::fs::create_dir(&data_dir)?;
 
         let user_key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter new key")
             .with_confirmation("Retype key", "keys do not match")
-            .interact()
-            .unwrap();
+            .interact()?;
 
         let salt: [u8; 16] = rand::random();
 
         let mut derived_key = [0u8; 32];
-        Argon2::default()
-            .hash_password_into(user_key.as_bytes(), &salt, &mut derived_key)
-            .unwrap();
+        Argon2::default().hash_password_into(user_key.as_bytes(), &salt, &mut derived_key)?;
 
         let key_aes = Aes256Gcm::new(&derived_key.into());
 
@@ -110,30 +105,26 @@ impl Manager {
         let nonce_slice: [u8; 12] = rand::random();
         let nonce = Nonce::from_slice(&nonce_slice);
 
-        let encrypted_key = key_aes.encrypt(nonce, &key[..]).unwrap();
+        let encrypted_key = key_aes.encrypt(nonce, &key[..])?;
 
         let name = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter username")
             .default(whoami::realname())
-            .interact()
-            .unwrap();
+            .interact()?;
 
         let email = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter email")
-            .validate_with(validate_email)
-            .interact()
-            .unwrap();
+            .validate_with(|inp: &String| validate_email(inp))
+            .interact()?;
 
         let remote = if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Do you want to enter a remote service")
-            .interact()
-            .unwrap()
+            .interact()?
         {
             let url = Input::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter remote url")
-                .validate_with(validate_url)
-                .interact()
-                .unwrap();
+                .validate_with(|inp: &String| validate_url(inp))
+                .interact()?;
 
             Some(url)
         } else {
@@ -147,44 +138,47 @@ impl Manager {
         };
 
         let store = Store::new(encrypted_key, salt, nonce_slice);
+        let store_aes = Aes256Gcm::new(&key.into());
 
-        user.save(&data_dir.join(USER_BIN_PATH));
-        store.save(&data_dir.join(STORE_BIN_PATH));
+        let user_nonce: [u8; 12] = rand::random();
 
-        let repo = Repository::init(&data_dir).unwrap();
+        user.save(&data_dir.join(USER_BIN_PATH), &store_aes, user_nonce)?;
+        store.save(&data_dir.join(STORE_BIN_PATH))?;
+
+        let repo = Repository::init(&data_dir)?;
 
         if let Some(remote) = &user.remote {
-            repo.remote("origin", remote).unwrap();
+            repo.remote("origin", remote)?;
         }
 
-        let mut index = repo.index().unwrap();
+        let mut index = repo.index()?;
 
-        index.add_path(Path::new(STORE_BIN_PATH)).unwrap();
-        index.add_path(Path::new(USER_BIN_PATH)).unwrap();
+        index.add_path(Path::new(STORE_BIN_PATH))?;
+        index.add_path(Path::new(USER_BIN_PATH))?;
 
-        let oid = index.write_tree().unwrap();
-        let signature = Signature::now(&user.name, &user.email).unwrap();
+        let oid = index.write_tree()?;
+        let signature = Signature::now(&user.name, &user.email)?;
 
         repo.commit(
             Some("HEAD"),
             &signature,
             &signature,
             "Initialize store",
-            &repo.find_tree(oid).unwrap(),
+            &repo.find_tree(oid)?,
             &[],
-        )
-        .unwrap();
+        )?;
 
-        Self {
+        Ok(Self {
             store,
-            store_aes: Aes256Gcm::new(&key.into()),
+            store_aes,
             data_dir,
             key_aes,
             repo,
             user,
+            user_nonce,
             store_dirty: false,
             user_dirty: false,
-        }
+        })
     }
 }
 
@@ -196,13 +190,12 @@ impl Manager {
         len: usize,
         special_chars: bool,
         overwrite: bool,
-    ) {
+    ) -> Result<()> {
         let password = if input {
             Password::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter your password")
-                .validate_with(length_validator)
-                .interact()
-                .unwrap()
+                .validate_with(|inp: &String| length_validator(inp))
+                .interact()?
         } else {
             let password_charset = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
             let mut rng = rand::thread_rng();
@@ -210,7 +203,7 @@ impl Manager {
             let subset = &password_charset[..(if special_chars { 94 } else { 62 })];
             let password = subset.choose_multiple(&mut rng, len).copied().collect();
 
-            String::from_utf8(password).unwrap()
+            String::from_utf8(password)?
         };
 
         let nonce_slice: [u8; 12] = rand::random();
@@ -218,8 +211,7 @@ impl Manager {
 
         let ciphertext = self
             .store_aes
-            .encrypt(nonce, password.as_bytes().as_ref())
-            .unwrap();
+            .encrypt(nonce, password.as_bytes().as_ref())?;
 
         match self.store.items.entry(label.to_string()) {
             Entry::Vacant(entry) => {
@@ -230,8 +222,7 @@ impl Manager {
                 let confirmed = overwrite
                     || Confirm::with_theme(&ColorfulTheme::default())
                         .with_prompt("Do you want to modify?")
-                        .interact()
-                        .unwrap();
+                        .interact()?;
                 if confirmed {
                     entry.insert(Item::new(nonce_slice, ciphertext));
                 }
@@ -239,6 +230,8 @@ impl Manager {
         };
 
         self.store_dirty = true;
+
+        Ok(())
     }
 
     pub fn delete(&mut self, label: &str) {
@@ -249,30 +242,29 @@ impl Manager {
         self.store_dirty = true;
     }
 
-    pub fn copy(&self, label: &str) {
+    pub fn copy(&self, label: &str) -> Result<()> {
         let Some(item) = self.store.items.get(label) else {
-            return println!("No item found in store");
+            println!("No item found in store");
+            return Ok(());
         };
 
         let Item {
             nonce, password, ..
         } = &item;
 
-        let plaintext = self
-            .store_aes
-            .decrypt(nonce.into(), password.as_slice())
-            .unwrap();
+        let plaintext = self.store_aes.decrypt(nonce.into(), password.as_slice())?;
 
-        let mut clipboard: ClipboardContext = ClipboardProvider::new().unwrap();
+        let mut clipboard: ClipboardContext = ClipboardProvider::new()?;
 
-        clipboard
-            .set_contents(String::from_utf8(plaintext).unwrap())
-            .unwrap();
+        clipboard.set_contents(String::from_utf8(plaintext)?)?;
+
+        Ok(())
     }
 
-    pub fn list(&self) {
+    pub fn list(&self) -> Result<()> {
         if self.store.is_empty() {
-            return println!("Empty store");
+            println!("Empty store");
+            return Ok(());
         }
 
         let mut t = Table::new(["Labels".to_owned(), "Passwords".to_owned()]);
@@ -281,56 +273,59 @@ impl Manager {
             let Item { nonce, password } = &item;
 
             let nonce = Nonce::from_slice(nonce);
-            let plaintext = self.store_aes.decrypt(nonce, password.as_slice()).unwrap();
+            let plaintext = self.store_aes.decrypt(nonce, password.as_slice())?;
 
-            t.insert([label.to_owned(), String::from_utf8(plaintext).unwrap()]);
+            t.insert([label.to_owned(), String::from_utf8(plaintext)?]);
         }
 
-        t.display();
+        t.display()?;
+
+        Ok(())
     }
 }
 
 impl Manager {
-    pub fn save(&self, message: &str) {
+    pub fn save(&self, message: &str) -> Result<()> {
         if !(self.store_dirty || self.user_dirty) {
-            return;
+            return Ok(());
         }
 
-        let mut index = self.repo.index().unwrap();
+        let mut index = self.repo.index()?;
 
         if self.store_dirty {
-            self.store.save(&self.data_dir.join(STORE_BIN_PATH));
-            index.add_path(Path::new(STORE_BIN_PATH)).unwrap();
+            self.store.save(&self.data_dir.join(STORE_BIN_PATH))?;
+            index.add_path(Path::new(STORE_BIN_PATH))?;
         }
 
         if self.user_dirty {
-            self.user.save(&self.data_dir.join(USER_BIN_PATH));
-            index.add_path(Path::new(USER_BIN_PATH)).unwrap();
+            self.user.save(
+                &self.data_dir.join(USER_BIN_PATH),
+                &self.store_aes,
+                self.user_nonce,
+            )?;
+            index.add_path(Path::new(USER_BIN_PATH))?;
         }
 
-        let oid = index.write_tree().unwrap();
-        let signature = Signature::now(&self.user.name, &self.user.email).unwrap();
+        let oid = index.write_tree()?;
+        let signature = Signature::now(&self.user.name, &self.user.email)?;
         let parent_commit = self
             .repo
-            .head()
-            .unwrap()
-            .resolve()
-            .unwrap()
-            .peel(ObjectType::Commit)
-            .unwrap()
+            .head()?
+            .resolve()?
+            .peel(ObjectType::Commit)?
             .into_commit()
-            .unwrap();
+            .map_err(|_| git2::Error::from_str("Couldn't find commit"))?;
 
-        let tree = self.repo.find_tree(oid).unwrap();
-        self.repo
-            .commit(
-                Some("HEAD"),
-                &signature,
-                &signature,
-                message,
-                &tree,
-                &[&parent_commit],
-            )
-            .unwrap();
+        let tree = self.repo.find_tree(oid)?;
+        self.repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &[&parent_commit],
+        )?;
+
+        Ok(())
     }
 }

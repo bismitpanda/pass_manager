@@ -12,9 +12,13 @@ use argon2::Argon2;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use git2::{Cred, Direction, PushOptions, RemoteCallbacks};
 use hashbrown::HashMap;
+use snafu::OptionExt;
 use url::Url;
 
-use crate::manager::{length_validator, Manager};
+use crate::{
+    error::{CommandErr, HostErr, Result, SplitErr},
+    manager::{length_validator, Manager},
+};
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 #[archive(check_bytes)]
@@ -48,14 +52,18 @@ impl Store {
         }
     }
 
-    pub fn open(path: &PathBuf) -> Self {
-        let buf = std::fs::read(path).unwrap();
-        rkyv::from_bytes::<Self>(&buf).unwrap()
+    pub fn open(path: &PathBuf) -> Result<Self> {
+        let buf = std::fs::read(path)?;
+        let bin = rkyv::from_bytes::<Self>(&buf).map_err(|err| err.to_string())?;
+
+        Ok(bin)
     }
 
-    pub fn save(&self, path: &PathBuf) {
-        let data = rkyv::to_bytes::<_, 1024>(self).unwrap();
-        std::fs::write(path, &data).unwrap();
+    pub fn save(&self, path: &PathBuf) -> Result<()> {
+        let data = rkyv::to_bytes::<_, 1024>(self).map_err(|err| err.to_string())?;
+        std::fs::write(path, &data)?;
+
+        Ok(())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -68,30 +76,29 @@ impl Store {
 }
 
 impl Manager {
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> Result<()> {
         if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Do you want to reset?")
-            .interact()
-            .unwrap()
+            .interact()?
         {
             self.store.items = HashMap::new();
         }
 
         self.store_dirty = true;
+
+        Ok(())
     }
 
-    pub fn modify(&mut self) {
+    pub fn modify(&mut self) -> Result<()> {
         let new_key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter new key")
             .with_confirmation("Retype new key", "keys do not match")
-            .validate_with(length_validator)
-            .interact()
-            .unwrap();
+            .validate_with(|inp: &String| length_validator(inp))
+            .interact()?;
 
         let enc_key = self
             .key_aes
-            .decrypt(&self.store.nonce.into(), self.store.key.as_slice())
-            .unwrap();
+            .decrypt(&self.store.nonce.into(), self.store.key.as_slice())?;
 
         let new_salt: [u8; 16] = rand::random();
         let new_nonce: [u8; 12] = rand::random();
@@ -100,86 +107,96 @@ impl Manager {
         self.store.salt = new_salt;
 
         let mut new_cipher_key: [u8; 32] = [0; 32];
-        Argon2::default()
-            .hash_password_into(new_key.as_bytes(), &new_salt, &mut new_cipher_key)
-            .unwrap();
+        Argon2::default().hash_password_into(new_key.as_bytes(), &new_salt, &mut new_cipher_key)?;
 
         let new_key_cipher = Aes256Gcm::new(&new_cipher_key.into());
 
-        let new_key = new_key_cipher
-            .encrypt(&new_nonce.into(), enc_key.as_slice())
-            .unwrap();
+        let new_key = new_key_cipher.encrypt(&new_nonce.into(), enc_key.as_slice())?;
 
         self.store.key = new_key;
 
         self.store_dirty = true;
+
+        Ok(())
     }
 
-    pub fn sync(&self) {
+    pub fn sync(&self) -> Result<()> {
         let Some(url) = &self.user.remote else {
-            return println!("Remote not set");
+            println!("Remote not set");
+            return Ok(());
         };
 
-        let mut remote = self.repo.find_remote("origin").unwrap();
+        let mut remote = self.repo.find_remote("origin")?;
 
         let mut push_options = PushOptions::new();
 
         let mut push_callbacks = RemoteCallbacks::new();
         push_callbacks.credentials(|_, _, _| {
-            let cred = get_remote_credentials(&get_host_from_url(url));
+            let cred = get_remote_credentials(
+                &get_host_from_url(url)
+                    .map_err(|_| git2::Error::from_str("Couldn't get host from remote url"))?,
+            )
+            .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
             Cred::userpass_plaintext(&cred["username"], &cred["password"])
         });
 
         let mut conn_callbacks = RemoteCallbacks::new();
         conn_callbacks.credentials(|_, _, _| {
-            let cred = get_remote_credentials(&get_host_from_url(url));
+            let cred = get_remote_credentials(
+                &get_host_from_url(url)
+                    .map_err(|_| git2::Error::from_str("Couldn't get host from remote url"))?,
+            )
+            .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
             Cred::userpass_plaintext(&cred["username"], &cred["password"])
         });
 
-        remote
-            .connect_auth(Direction::Push, Some(conn_callbacks), None)
-            .unwrap();
+        remote.connect_auth(Direction::Push, Some(conn_callbacks), None)?;
 
         push_options.remote_callbacks(push_callbacks);
 
-        remote
-            .push(
-                &["refs/heads/master:refs/heads/master"],
-                Some(&mut push_options),
-            )
-            .unwrap();
+        remote.push(
+            &["refs/heads/master:refs/heads/master"],
+            Some(&mut push_options),
+        )?;
+
+        Ok(())
     }
 }
 
-fn get_remote_credentials(host: &str) -> HashMap<String, String> {
+fn get_remote_credentials(host: &str) -> Result<HashMap<String, String>> {
     let command = Command::new("git")
         .args(["credential", "fill"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn()?;
 
     command
         .stdin
-        .unwrap()
-        .write_all(format!("protocol=https\nhost={host}").as_bytes())
-        .unwrap();
+        .context(CommandErr {
+            fd: "stdin".to_string(),
+        })?
+        .write_all(format!("protocol=https\nhost={host}").as_bytes())?;
 
     let mut s = String::new();
-    command.stdout.unwrap().read_to_string(&mut s).unwrap();
+    command
+        .stdout
+        .context(CommandErr {
+            fd: "stdin".to_string(),
+        })?
+        .read_to_string(&mut s)?;
 
     let mut config = HashMap::new();
 
     for line in s.split_terminator('\n') {
-        let (k, v) = line.split_once('=').unwrap();
+        let (k, v) = line.split_once('=').context(SplitErr {})?;
         config.insert(k.into(), v.into());
     }
 
-    config
+    Ok(config)
 }
 
-fn get_host_from_url(url: &str) -> String {
-    let url = Url::parse(url).unwrap();
+fn get_host_from_url(url: &str) -> Result<String> {
+    let url = Url::parse(url)?;
 
-    url.host_str().unwrap().to_string()
+    Ok(url.host_str().context(HostErr {})?.to_string())
 }

@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic, clippy::nursery, clippy::all)]
 
 mod cmd;
+mod error;
 mod manager;
 mod store;
 mod styles;
@@ -8,23 +9,27 @@ mod table;
 mod user;
 
 use clap::Parser;
-use cmd::{User, UserSubcommand};
+use cmd::{Cli, CliSubcommand, Store, StoreSubcommand, User, UserSubcommand};
+use error::{DataDirErr, Result};
 use manager::Manager;
+use snafu::OptionExt;
 
-use crate::cmd::{Cli, CliSubcommand, Store, StoreSubcommand};
-
-fn main() {
+fn main() -> Result<()> {
     let command = Cli::parse();
-    let mut manager = Manager::new(dirs::data_local_dir().unwrap().join("PassManager"));
+    let mut manager = Manager::new(
+        dirs::data_local_dir()
+            .context(DataDirErr {})?
+            .join("PassManager"),
+    )?;
 
     match &command.subcommand {
-        CliSubcommand::Copy { label } => manager.copy(label),
+        CliSubcommand::Copy { label } => manager.copy(label)?,
 
         CliSubcommand::Delete { label } => {
             manager.delete(label);
         }
 
-        CliSubcommand::List => manager.list(),
+        CliSubcommand::List => manager.list()?,
 
         CliSubcommand::Add {
             label,
@@ -33,16 +38,16 @@ fn main() {
             special_chars,
             overwrite,
         } => {
-            manager.add(label, *input, *len, *special_chars, *overwrite);
+            manager.add(label, *input, *len, *special_chars, *overwrite)?;
         }
 
         CliSubcommand::Store(Store { subcommand }) => {
             match subcommand {
-                StoreSubcommand::Reset => manager.reset(),
+                StoreSubcommand::Reset => manager.reset()?,
 
-                StoreSubcommand::Modify => manager.modify(),
+                StoreSubcommand::Modify => manager.modify()?,
 
-                StoreSubcommand::Sync => manager.sync(),
+                StoreSubcommand::Sync => manager.sync()?,
             };
         }
 
@@ -53,11 +58,11 @@ fn main() {
                 name,
                 email,
                 remote,
-            } => manager.set_user(name, email, remote),
+            } => manager.set_user(name, email, remote)?,
         },
 
         CliSubcommand::Initialize => {}
     }
 
-    manager.save(&command.to_message());
+    manager.save(&command.to_message())
 }

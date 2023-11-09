@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
+use aes_gcm::{aead::Aead, Aes256Gcm};
 use owo_colors::OwoColorize;
 use regex::Regex;
 use url::Url;
 
-use crate::manager::Manager;
+use crate::{error::Result, manager::Manager};
 
 const EMAIL_RE: &str = r"^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$";
 
@@ -17,27 +18,36 @@ pub struct User {
 }
 
 impl User {
-    pub fn open(path: &PathBuf) -> Self {
-        let buf = std::fs::read(path).unwrap();
-        rkyv::from_bytes::<Self>(&buf).unwrap()
+    pub fn open(path: &PathBuf, cipher: &Aes256Gcm) -> Result<([u8; 12], Self)> {
+        let buf = std::fs::read(path)?;
+        let (nonce_slice, ciphertext) = buf.split_at(12);
+        let decrypted_buf = cipher.decrypt(nonce_slice.into(), ciphertext)?;
+
+        let nonce: [u8; 12] = nonce_slice.try_into()?;
+
+        Ok((
+            nonce,
+            rkyv::from_bytes::<Self>(&decrypted_buf).map_err(|err| err.to_string())?,
+        ))
     }
 
-    pub fn save(&self, path: &PathBuf) {
-        let data = rkyv::to_bytes::<_, 1024>(self).unwrap();
-        std::fs::write(path, &data).unwrap();
+    pub fn save(&self, path: &PathBuf, cipher: &Aes256Gcm, nonce: [u8; 12]) -> Result<()> {
+        let data = rkyv::to_bytes::<_, 1024>(self).map_err(|err| err.to_string())?;
+        let encrypted_data = cipher.encrypt(&nonce.into(), data.as_slice())?;
+        std::fs::write(path, encrypted_data)?;
+
+        Ok(())
     }
 }
 
-#[allow(clippy::ptr_arg)]
-pub fn validate_email(inp: &String) -> Result<(), String> {
+pub fn validate_email(inp: &str) -> Result<(), String> {
     let re = Regex::new(EMAIL_RE).map_err(|err| err.to_string())?;
     re.is_match(inp)
         .then_some(())
         .ok_or_else(|| "invalid email address".to_string())
 }
 
-#[allow(clippy::ptr_arg)]
-pub fn validate_url(inp: &String) -> Result<(), String> {
+pub fn validate_url(inp: &str) -> Result<(), String> {
     Url::parse(inp).map(|_| ()).map_err(|err| err.to_string())
 }
 
@@ -65,7 +75,7 @@ impl Manager {
         name: &Option<String>,
         email: &Option<String>,
         remote: &Option<String>,
-    ) {
+    ) -> Result<()> {
         if let Some(name) = name {
             self.user.name = name.clone();
         }
@@ -76,15 +86,17 @@ impl Manager {
 
         if let Some(remote) = remote {
             if self.repo.find_remote("origin").is_ok() {
-                self.repo.remote_set_url("origin", remote).unwrap();
+                self.repo.remote_set_url("origin", remote)?;
             } else {
-                self.repo.remote("origin", remote).unwrap();
+                self.repo.remote("origin", remote)?;
             }
 
-            self.repo.remote_set_url("origin", remote).unwrap();
+            self.repo.remote_set_url("origin", remote)?;
             self.user.remote = Some(remote.clone());
         }
 
         self.user_dirty = true;
+
+        Ok(())
     }
 }
