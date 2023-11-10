@@ -7,14 +7,14 @@ use aes_gcm::{
 use argon2::Argon2;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
-use git2::{ObjectType, Repository, Signature};
+use git2::{Config, ObjectType, Repository, RepositoryInitOptions, Signature};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
-use snafu::OptionExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::{
-    error::{InvalidCommitMessageErr, Result},
+    error::{FsErr, InvalidCommitMessageErr, Result},
     store::{Item, Store},
     table::Table,
     user::{validate_email, validate_url, User},
@@ -36,7 +36,7 @@ pub struct Manager {
 }
 
 pub fn length_validator(inp: &str) -> Result<(), String> {
-    (inp.len() > 8)
+    (inp.len() >= 8)
         .then_some(())
         .ok_or_else(|| "Password must be longer than 8".to_string())
 }
@@ -88,7 +88,9 @@ impl Manager {
     }
 
     pub fn create(data_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir(&data_dir)?;
+        std::fs::create_dir(&data_dir).context(FsErr {
+            path: data_dir.display().to_string(),
+        })?;
 
         let user_key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter new key")
@@ -108,15 +110,29 @@ impl Manager {
 
         let encrypted_key = key_aes.encrypt(nonce, &key[..])?;
 
+        let global_config = Config::open_default()?;
+
         let name = Input::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter username")
-            .default(whoami::realname())
+            .default(
+                global_config
+                    .get_string("user.name")
+                    .unwrap_or(whoami::realname()),
+            )
             .interact()?;
 
-        let email = Input::with_theme(&ColorfulTheme::default())
-            .with_prompt("Enter email")
-            .validate_with(|inp: &String| validate_email(inp))
-            .interact()?;
+        let email = if let Ok(email) = global_config.get_string("user.email") {
+            Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter email")
+                .default(email)
+                .validate_with(|inp: &String| validate_email(inp))
+                .interact()?
+        } else {
+            Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter email")
+                .validate_with(|inp: &String| validate_email(inp))
+                .interact()?
+        };
 
         let remote = if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Do you want to enter a remote service")
@@ -146,9 +162,12 @@ impl Manager {
         user.save(&data_dir.join(USER_BIN_PATH), &store_aes, user_nonce)?;
         store.save(&data_dir.join(STORE_BIN_PATH))?;
 
-        let repo = Repository::init(&data_dir)?;
+        let mut init_opts = RepositoryInitOptions::new();
+        init_opts.initial_head("main");
 
-        repo.add_ignore_rule(&format!("{}.bak\n{}.bak", STORE_BIN_PATH, USER_BIN_PATH))?;
+        let repo = Repository::init_opts(&data_dir, &init_opts)?;
+
+        repo.add_ignore_rule(&format!("{STORE_BIN_PATH}.bak\n{USER_BIN_PATH}.bak"))?;
 
         if let Some(remote) = &user.remote {
             repo.remote("origin", remote)?;
@@ -292,7 +311,7 @@ impl Manager {
 
         for commit in revwalk {
             let commit = self.repo.find_commit(commit?)?;
-            println!("{}", commit.message().context(InvalidCommitMessageErr {})?)
+            println!("{}", commit.message().context(InvalidCommitMessageErr {})?);
         }
 
         Ok(())

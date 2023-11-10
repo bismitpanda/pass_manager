@@ -23,6 +23,9 @@ impl Cli {
             })
             | CliSubcommand::Store(Store {
                 subcommand: StoreSubcommand::Sync { .. },
+            })
+            | CliSubcommand::Store(Store {
+                subcommand: StoreSubcommand::Nuke { .. },
             }) => String::new(),
 
             CliSubcommand::Add { ref label, .. } => format!("store add {label}"),
@@ -30,14 +33,13 @@ impl Cli {
                 format!("store delete {label}")
             }
 
-            CliSubcommand::Store(ref store) => format!(
-                "store {}",
-                match store.subcommand {
-                    StoreSubcommand::Modify => "modify",
-                    StoreSubcommand::Reset => "reset",
-                    StoreSubcommand::Sync { .. } => unreachable!(),
-                }
-            ),
+            CliSubcommand::Store(Store {
+                subcommand: StoreSubcommand::Reset,
+            }) => "store reset".to_string(),
+
+            CliSubcommand::Store(Store {
+                subcommand: StoreSubcommand::Modify,
+            }) => "store modify".to_string(),
 
             CliSubcommand::User(User {
                 subcommand:
@@ -135,6 +137,18 @@ pub enum StoreSubcommand {
         /// sync store in direction
         #[arg(long, short, value_enum, default_value_t = SyncDirection::Push)]
         dir: SyncDirection,
+    },
+
+    /// Remove the store, user data and all git history
+    #[group(multiple = false, required = true)]
+    Nuke {
+        /// sync to upstream before nuking
+        #[arg(long, short)]
+        sync: bool,
+
+        /// archive the directory and save it to pm.tar in the current working directory
+        #[arg(long, short)]
+        archive: bool,
     },
 }
 

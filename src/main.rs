@@ -48,7 +48,9 @@ fn run() -> Result<()> {
 
                 StoreSubcommand::Modify => manager.modify()?,
 
-                StoreSubcommand::Sync { dir } => manager.sync(dir)?,
+                StoreSubcommand::Sync { dir } => manager.sync(*dir)?,
+
+                StoreSubcommand::Nuke { sync, archive } => manager.nuke(*sync, *archive)?,
             };
         }
 

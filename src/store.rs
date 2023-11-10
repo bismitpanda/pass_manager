@@ -1,4 +1,5 @@
 use std::{
+    fs::File,
     io::prelude::*,
     path::PathBuf,
     process::{Command, Stdio},
@@ -12,12 +13,12 @@ use argon2::Argon2;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use git2::{Cred, Direction, PushOptions, RemoteCallbacks};
 use hashbrown::HashMap;
-use snafu::OptionExt;
+use snafu::{OptionExt, ResultExt};
 use url::Url;
 
 use crate::{
     cmd::SyncDirection,
-    error::{CommandErr, HostErr, Result, SplitErr},
+    error::{CommandErr, FsErr, HostErr, Result, SplitErr},
     manager::{length_validator, Manager},
 };
 
@@ -54,7 +55,9 @@ impl Store {
     }
 
     pub fn open(path: &PathBuf) -> Result<Self> {
-        let buf = std::fs::read(path)?;
+        let buf = std::fs::read(path).context(FsErr {
+            path: path.display().to_string(),
+        })?;
         let bin = rkyv::from_bytes::<Self>(&buf).map_err(|err| err.to_string())?;
 
         Ok(bin)
@@ -62,7 +65,9 @@ impl Store {
 
     pub fn save(&self, path: &PathBuf) -> Result<()> {
         let data = rkyv::to_bytes::<_, 1024>(self).map_err(|err| err.to_string())?;
-        std::fs::write(path, &data)?;
+        std::fs::write(path, &data).context(FsErr {
+            path: path.display().to_string(),
+        })?;
 
         Ok(())
     }
@@ -121,7 +126,7 @@ impl Manager {
         Ok(())
     }
 
-    pub fn sync(&self, dir: &SyncDirection) -> Result<()> {
+    pub fn sync(&self, dir: SyncDirection) -> Result<()> {
         let Some(url) = &self.user.remote else {
             println!("Remote not set");
             return Ok(());
@@ -158,13 +163,36 @@ impl Manager {
                 push_options.remote_callbacks(push_callbacks);
 
                 remote.push(
-                    &["refs/heads/master:refs/heads/master"],
+                    &["refs/heads/main:refs/heads/main"],
                     Some(&mut push_options),
                 )?;
             }
 
             SyncDirection::Pull => {}
         }
+
+        Ok(())
+    }
+
+    pub fn nuke(&self, sync: bool, archive: bool) -> Result<()> {
+        if sync {
+            self.sync(SyncDirection::Push)?;
+        }
+
+        if archive {
+            let archive_file = File::create("pm.tar").context(FsErr {
+                path: "pm.tar".to_string(),
+            })?;
+
+            let mut builder = tar::Builder::new(archive_file);
+            builder.append_dir_all("PassManager", &self.data_dir)?;
+
+            builder.finish()?;
+        }
+
+        std::fs::remove_dir_all(&self.data_dir).context(FsErr {
+            path: self.data_dir.display().to_string(),
+        })?;
 
         Ok(())
     }

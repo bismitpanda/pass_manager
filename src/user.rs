@@ -3,9 +3,13 @@ use std::path::PathBuf;
 use aes_gcm::{aead::Aead, Aes256Gcm};
 use owo_colors::OwoColorize;
 use regex::Regex;
+use snafu::ResultExt;
 use url::Url;
 
-use crate::{error::Result, manager::Manager};
+use crate::{
+    error::{FsErr, Result},
+    manager::Manager,
+};
 
 const EMAIL_RE: &str = r"^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$";
 
@@ -19,7 +23,9 @@ pub struct User {
 
 impl User {
     pub fn open(path: &PathBuf, cipher: &Aes256Gcm) -> Result<([u8; 12], Self)> {
-        let buf = std::fs::read(path)?;
+        let buf = std::fs::read(path).context(FsErr {
+            path: path.display().to_string(),
+        })?;
         let (nonce_slice, ciphertext) = buf.split_at(12);
         let decrypted_buf = cipher.decrypt(nonce_slice.into(), ciphertext)?;
 
@@ -34,7 +40,9 @@ impl User {
     pub fn save(&self, path: &PathBuf, cipher: &Aes256Gcm, nonce: [u8; 12]) -> Result<()> {
         let data = rkyv::to_bytes::<_, 1024>(self).map_err(|err| err.to_string())?;
         let encrypted_data = cipher.encrypt(&nonce.into(), data.as_slice())?;
-        std::fs::write(path, [nonce.to_vec(), encrypted_data].concat())?;
+        std::fs::write(path, [nonce.to_vec(), encrypted_data].concat()).context(FsErr {
+            path: path.display().to_string(),
+        })?;
 
         Ok(())
     }
