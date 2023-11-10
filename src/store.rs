@@ -16,6 +16,7 @@ use snafu::OptionExt;
 use url::Url;
 
 use crate::{
+    cmd::SyncDirection,
     error::{CommandErr, HostErr, Result, SplitErr},
     manager::{length_validator, Manager},
 };
@@ -120,44 +121,50 @@ impl Manager {
         Ok(())
     }
 
-    pub fn sync(&self) -> Result<()> {
+    pub fn sync(&self, dir: &SyncDirection) -> Result<()> {
         let Some(url) = &self.user.remote else {
             println!("Remote not set");
             return Ok(());
         };
 
-        let mut remote = self.repo.find_remote("origin")?;
+        match dir {
+            SyncDirection::Push => {
+                let mut remote = self.repo.find_remote("origin")?;
 
-        let mut push_options = PushOptions::new();
+                let mut push_options = PushOptions::new();
 
-        let mut push_callbacks = RemoteCallbacks::new();
-        push_callbacks.credentials(|_, _, _| {
-            let cred = get_remote_credentials(
-                &get_host_from_url(url)
-                    .map_err(|_| git2::Error::from_str("Couldn't get host from remote url"))?,
-            )
-            .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
-            Cred::userpass_plaintext(&cred["username"], &cred["password"])
-        });
+                let mut push_callbacks = RemoteCallbacks::new();
+                push_callbacks.credentials(|_, _, _| {
+                    let cred =
+                        get_remote_credentials(&get_host_from_url(url).map_err(|_| {
+                            git2::Error::from_str("Couldn't get host from remote url")
+                        })?)
+                        .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
+                    Cred::userpass_plaintext(&cred["username"], &cred["password"])
+                });
 
-        let mut conn_callbacks = RemoteCallbacks::new();
-        conn_callbacks.credentials(|_, _, _| {
-            let cred = get_remote_credentials(
-                &get_host_from_url(url)
-                    .map_err(|_| git2::Error::from_str("Couldn't get host from remote url"))?,
-            )
-            .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
-            Cred::userpass_plaintext(&cred["username"], &cred["password"])
-        });
+                let mut conn_callbacks = RemoteCallbacks::new();
+                conn_callbacks.credentials(|_, _, _| {
+                    let cred =
+                        get_remote_credentials(&get_host_from_url(url).map_err(|_| {
+                            git2::Error::from_str("Couldn't get host from remote url")
+                        })?)
+                        .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
+                    Cred::userpass_plaintext(&cred["username"], &cred["password"])
+                });
 
-        remote.connect_auth(Direction::Push, Some(conn_callbacks), None)?;
+                remote.connect_auth(Direction::Push, Some(conn_callbacks), None)?;
 
-        push_options.remote_callbacks(push_callbacks);
+                push_options.remote_callbacks(push_callbacks);
 
-        remote.push(
-            &["refs/heads/master:refs/heads/master"],
-            Some(&mut push_options),
-        )?;
+                remote.push(
+                    &["refs/heads/master:refs/heads/master"],
+                    Some(&mut push_options),
+                )?;
+            }
+
+            SyncDirection::Pull => {}
+        }
 
         Ok(())
     }

@@ -34,7 +34,7 @@ impl User {
     pub fn save(&self, path: &PathBuf, cipher: &Aes256Gcm, nonce: [u8; 12]) -> Result<()> {
         let data = rkyv::to_bytes::<_, 1024>(self).map_err(|err| err.to_string())?;
         let encrypted_data = cipher.encrypt(&nonce.into(), data.as_slice())?;
-        std::fs::write(path, encrypted_data)?;
+        std::fs::write(path, [nonce.to_vec(), encrypted_data].concat())?;
 
         Ok(())
     }

@@ -1,6 +1,6 @@
 [package]
 name = "pm"
-version = "0.8.0"
+version = "0.8.3"
 edition = "2021"
 
 [dependencies]
@@ -17,7 +17,7 @@ owo-colors = "3.5.0"
 rand = "0.8.5"
 regex = "1.10.2"
 rkyv = { version = "0.7.42", features = ["validation"] }
-snafu = { version = "0.7.5", features = ["rust_1_61"] }
+snafu = "0.7.5"
 url = "2.4.1"
 whoami = { version = "1.4.1", default-features = false }
 

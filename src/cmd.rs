@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::styles::STYLES;
 
@@ -12,21 +12,22 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn to_message(&self) -> String {
+    pub fn to_commit_message(&self) -> String {
         match &self.subcommand {
             CliSubcommand::List
             | CliSubcommand::Initialize
+            | CliSubcommand::History
             | CliSubcommand::Copy { .. }
             | CliSubcommand::User(User {
                 subcommand: UserSubcommand::Get,
             })
             | CliSubcommand::Store(Store {
-                subcommand: StoreSubcommand::Sync,
+                subcommand: StoreSubcommand::Sync { .. },
             }) => String::new(),
 
-            CliSubcommand::Add { ref label, .. } => format!("add {label}"),
+            CliSubcommand::Add { ref label, .. } => format!("store add {label}"),
             CliSubcommand::Delete { ref label } => {
-                format!("add {label}")
+                format!("store delete {label}")
             }
 
             CliSubcommand::Store(ref store) => format!(
@@ -34,7 +35,7 @@ impl Cli {
                 match store.subcommand {
                     StoreSubcommand::Modify => "modify",
                     StoreSubcommand::Reset => "reset",
-                    StoreSubcommand::Sync => unreachable!(),
+                    StoreSubcommand::Sync { .. } => unreachable!(),
                 }
             ),
 
@@ -103,6 +104,9 @@ pub enum CliSubcommand {
     /// Initialize the store
     Initialize,
 
+    /// Check history
+    History,
+
     /// Subcommands concerning the store
     Store(Store),
 
@@ -127,7 +131,17 @@ pub enum StoreSubcommand {
     Modify,
 
     /// Sync to remote repository
-    Sync,
+    Sync {
+        /// sync store in direction
+        #[arg(long, short, value_enum, default_value_t = SyncDirection::Push)]
+        dir: SyncDirection,
+    },
+}
+
+#[derive(ValueEnum, Clone, Copy)]
+pub enum SyncDirection {
+    Push,
+    Pull,
 }
 
 #[derive(Parser)]

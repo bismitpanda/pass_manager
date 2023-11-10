@@ -11,51 +11,44 @@ pub enum PassManagerErr {
     #[snafu(display("slice is empty, cannot split"))]
     Split,
 
-    Git {
-        err: git2::Error,
-    },
+    #[snafu(display("git error: {err}"))]
+    Git { err: git2::Error },
 
-    Io {
-        err: std::io::Error,
-    },
+    #[snafu(display("io error: {err}"))]
+    Io { err: std::io::Error },
 
-    Dialoguer {
-        err: dialoguer::Error,
-    },
+    #[snafu(display("dialoguer error: {err}"))]
+    Dialoguer { err: dialoguer::Error },
 
-    Argon2 {
-        err: argon2::Error,
-    },
+    #[snafu(display("argon2 error: {err}"))]
+    Argon2 { err: argon2::Error },
 
-    Aes {
-        err: aes_gcm::Error,
-    },
+    #[snafu(display("invalid password"))]
+    Aes { err: aes_gcm::Error },
 
-    Rkyv {
-        err: String,
-    },
+    #[snafu(display("rkyv error: {err}"))]
+    Rkyv { err: String },
 
-    TryFrom {
-        err: TryFromSliceError,
-    },
+    #[snafu(display("try_from error: {err}"))]
+    TryFrom { err: TryFromSliceError },
 
-    Utf8 {
-        err: FromUtf8Error,
-    },
+    #[snafu(display("couldn't convert slice to string. error: {err}"))]
+    Utf8 { err: FromUtf8Error },
 
-    Clipboard {
-        err: Box<dyn std::error::Error>,
-    },
+    #[snafu(display("clipboard error: {err}"))]
+    Clipboard { err: Box<dyn std::error::Error> },
 
-    Command {
-        fd: String,
-    },
+    #[snafu(display("could not acquire {fd} of command"))]
+    Command { fd: String },
 
-    Url {
-        err: url::ParseError,
-    },
+    #[snafu(display("invalid url: {err}"))]
+    Url { err: url::ParseError },
 
+    #[snafu(display("invalid url: no host found"))]
     Host,
+
+    #[snafu(display("git error: commit message is not valid utf-8"))]
+    InvalidCommitMessage,
 }
 
 pub type Result<T, E = PassManagerErr> = std::result::Result<T, E>;

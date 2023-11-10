@@ -11,9 +11,10 @@ use git2::{ObjectType, Repository, Signature};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
+use snafu::OptionExt;
 
 use crate::{
-    error::Result,
+    error::{InvalidCommitMessageErr, Result},
     store::{Item, Store},
     table::Table,
     user::{validate_email, validate_url, User},
@@ -147,6 +148,8 @@ impl Manager {
 
         let repo = Repository::init(&data_dir)?;
 
+        repo.add_ignore_rule(&format!("{}.bak\n{}.bak", STORE_BIN_PATH, USER_BIN_PATH))?;
+
         if let Some(remote) = &user.remote {
             repo.remote("origin", remote)?;
         }
@@ -279,6 +282,18 @@ impl Manager {
         }
 
         t.display()?;
+
+        Ok(())
+    }
+
+    pub fn history(&self) -> Result<()> {
+        let mut revwalk = self.repo.revwalk()?;
+        revwalk.push_head()?;
+
+        for commit in revwalk {
+            let commit = self.repo.find_commit(commit?)?;
+            println!("{}", commit.message().context(InvalidCommitMessageErr {})?)
+        }
 
         Ok(())
     }

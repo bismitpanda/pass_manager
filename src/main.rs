@@ -12,9 +12,10 @@ use clap::Parser;
 use cmd::{Cli, CliSubcommand, Store, StoreSubcommand, User, UserSubcommand};
 use error::{DataDirErr, Result};
 use manager::Manager;
+use owo_colors::OwoColorize;
 use snafu::OptionExt;
 
-fn main() -> Result<()> {
+fn run() -> Result<()> {
     let command = Cli::parse();
     let mut manager = Manager::new(
         dirs::data_local_dir()
@@ -47,7 +48,7 @@ fn main() -> Result<()> {
 
                 StoreSubcommand::Modify => manager.modify()?,
 
-                StoreSubcommand::Sync => manager.sync()?,
+                StoreSubcommand::Sync { dir } => manager.sync(dir)?,
             };
         }
 
@@ -62,7 +63,15 @@ fn main() -> Result<()> {
         },
 
         CliSubcommand::Initialize => {}
+
+        CliSubcommand::History => manager.history()?,
     }
 
-    manager.save(&command.to_message())
+    manager.save(&command.to_commit_message())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        println!("{}", err.to_string().bright_red());
+    }
 }
