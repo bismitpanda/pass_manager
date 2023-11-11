@@ -1,6 +1,9 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::styles::STYLES;
+use crate::{
+    styles::STYLES,
+    user::{validate_email, validate_url},
+};
 
 #[derive(Parser)]
 #[command(styles=STYLES)]
@@ -46,16 +49,12 @@ impl Cli {
                         remote,
                     },
             }) => {
-                let mut fields = [("name", name), ("email", email)]
+                let fields = [("name", name), ("email", email), ("remote", remote)]
                     .iter()
                     .filter_map(|(name, el)| el.is_some().then_some(*name))
-                    .collect::<Vec<_>>();
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
-                if !remote.is_empty() {
-                    fields.push("remote");
-                }
-
-                let fields = fields.join(", ");
                 format!("user set {fields}")
             }
         }
@@ -180,11 +179,25 @@ pub enum UserSubcommand {
         name: Option<String>,
 
         /// set the email of user
-        #[arg(long, short)]
+        #[arg(long, short, value_parser = parse_email)]
         email: Option<String>,
 
         /// set the remote endpoint of user
-        #[arg(long, short, default_value_t = String::new())]
-        remote: String,
+        #[arg(long, short, value_parser = parse_remote, allow_hyphen_values = true)]
+        remote: Option<String>,
     },
+}
+
+fn parse_email(arg: &str) -> Result<String, String> {
+    validate_email(arg)?;
+
+    Ok(arg.to_string())
+}
+
+fn parse_remote(arg: &str) -> Result<String, String> {
+    if arg != "-" {
+        validate_url(arg)?;
+    }
+
+    return Ok(arg.to_string());
 }

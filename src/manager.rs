@@ -134,12 +134,14 @@ impl Manager {
             .with_prompt("Do you want to enter a remote service")
             .interact()?
         {
-            Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter remote url")
-                .validate_with(|inp: &String| validate_url(inp))
-                .interact()?
+            Some(
+                Input::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Enter remote url")
+                    .validate_with(|inp: &String| validate_url(inp))
+                    .interact()?,
+            )
         } else {
-            String::new()
+            None
         };
 
         let user = User {
@@ -163,8 +165,8 @@ impl Manager {
 
         repo.add_ignore_rule(&format!("{STORE_BIN_PATH}.bak\n{USER_BIN_PATH}.bak"))?;
 
-        if user.remote.is_empty() {
-            repo.remote("origin", &user.remote)?;
+        if let Some(remote) = &user.remote {
+            repo.remote("origin", remote)?;
         }
 
         let mut index = repo.index()?;
