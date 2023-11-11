@@ -121,18 +121,16 @@ impl Manager {
             )
             .interact()?;
 
-        let email = if let Ok(email) = global_config.get_string("user.email") {
-            Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter email")
-                .default(email)
-                .validate_with(|inp: &String| validate_email(inp))
-                .interact()?
-        } else {
-            Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter email")
-                .validate_with(|inp: &String| validate_email(inp))
-                .interact()?
+        let colorful_theme = ColorfulTheme::default();
+        let mut email_input = Input::with_theme(&colorful_theme).with_prompt("Enter email");
+
+        if let Ok(email) = global_config.get_string("user.email") {
+            email_input = email_input.default(email);
         };
+
+        let email = email_input
+            .validate_with(|inp: &String| validate_email(inp))
+            .interact()?;
 
         let remote = if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Do you want to enter a remote service")
