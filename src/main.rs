@@ -25,10 +25,9 @@ fn run() -> Result<Option<String>> {
 
     let mut manager = if data_dir.exists() {
         if matches!(command.subcommand, CliSubcommand::Initialize) {
-            Manager::init(data_dir)?;
-
             return Ok(Some("Store already initialized".to_string()));
         }
+
         Manager::new(data_dir)?
     } else {
         if matches!(command.subcommand, CliSubcommand::Initialize) {
@@ -89,7 +88,7 @@ fn run() -> Result<Option<String>> {
             } => manager.set_user(name, email, remote)?,
         },
 
-        CliSubcommand::Initialize => {}
+        CliSubcommand::Initialize => unreachable!(),
 
         CliSubcommand::History => manager.history()?,
     }
