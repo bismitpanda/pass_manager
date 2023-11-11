@@ -138,7 +138,7 @@ pub enum StoreSubcommand {
     },
 
     /// Remove the store, user data and all git history
-    #[group(multiple = false, required = true)]
+    #[group(multiple = false)]
     Nuke {
         /// sync to upstream before nuking
         #[arg(long, short)]

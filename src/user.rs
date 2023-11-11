@@ -103,7 +103,7 @@ impl Manager {
             self.user.remote = Some(remote.clone());
         }
 
-        self.user_dirty = true;
+        self.dirty = true;
 
         Ok(())
     }

@@ -90,7 +90,7 @@ impl Manager {
             self.store.items = HashMap::new();
         }
 
-        self.store_dirty = true;
+        self.dirty = true;
 
         Ok(())
     }
@@ -121,7 +121,7 @@ impl Manager {
 
         self.store.key = new_key;
 
-        self.store_dirty = true;
+        self.dirty = true;
 
         Ok(())
     }

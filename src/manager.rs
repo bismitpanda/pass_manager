@@ -31,8 +31,7 @@ pub struct Manager {
     pub user: User,
     pub user_nonce: [u8; 12],
 
-    pub store_dirty: bool,
-    pub user_dirty: bool,
+    pub dirty: bool,
 }
 
 pub fn length_validator(inp: &str) -> Result<(), String> {
@@ -82,8 +81,7 @@ impl Manager {
             repo,
             user,
             user_nonce,
-            store_dirty: false,
-            user_dirty: false,
+            dirty: false,
         })
     }
 
@@ -196,8 +194,7 @@ impl Manager {
             repo,
             user,
             user_nonce,
-            store_dirty: false,
-            user_dirty: false,
+            dirty: false,
         })
     }
 }
@@ -249,7 +246,7 @@ impl Manager {
             }
         };
 
-        self.store_dirty = true;
+        self.dirty = true;
 
         Ok(())
     }
@@ -259,7 +256,7 @@ impl Manager {
             println!("{}", "No item found in store".bright_red());
         }
 
-        self.store_dirty = true;
+        self.dirty = true;
     }
 
     pub fn copy(&self, label: &str) -> Result<()> {
@@ -318,24 +315,22 @@ impl Manager {
 
 impl Manager {
     pub fn save(&self, message: &str) -> Result<()> {
-        if !(self.store_dirty || self.user_dirty) {
+        if !(self.dirty || self.dirty) {
             return Ok(());
         }
 
         let mut index = self.repo.index()?;
 
-        if self.store_dirty {
+        if self.dirty {
             self.store.save(&self.data_dir.join(STORE_BIN_PATH))?;
-            index.add_path(Path::new(STORE_BIN_PATH))?;
-        }
-
-        if self.user_dirty {
             self.user.save(
                 &self.data_dir.join(USER_BIN_PATH),
                 &self.store_aes,
                 self.user_nonce,
             )?;
+
             index.add_path(Path::new(USER_BIN_PATH))?;
+            index.add_path(Path::new(STORE_BIN_PATH))?;
         }
 
         let oid = index.write_tree()?;
