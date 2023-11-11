@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -7,17 +10,19 @@ use aes_gcm::{
 use argon2::Argon2;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
+use email_address::EmailAddress;
 use git2::{Config, ObjectType, Repository, RepositoryInitOptions, Signature};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
 use snafu::{OptionExt, ResultExt};
+use url::Url;
 
 use crate::{
-    error::{FsErr, InvalidCommitMessageErr, Result},
+    error::{FsErr, HostErr, InvalidCommitMessageErr, Result},
     store::{Item, Store},
     table::Table,
-    user::{validate_email, validate_url, User},
+    user::{Remote, User},
 };
 
 pub struct Manager {
@@ -32,6 +37,8 @@ pub struct Manager {
     pub user_nonce: [u8; 12],
 
     pub fs_dirty: bool,
+
+    pub success_message: Option<String>,
 }
 
 pub fn length_validator(inp: &str) -> Result<(), String> {
@@ -45,14 +52,6 @@ const USER_BIN_PATH: &str = "user.bin";
 
 impl Manager {
     pub fn new(data_dir: PathBuf) -> Result<Self> {
-        if data_dir.exists() {
-            Self::open(data_dir)
-        } else {
-            Self::create(data_dir)
-        }
-    }
-
-    pub fn open(data_dir: PathBuf) -> Result<Self> {
         let store = Store::open(&data_dir.join(STORE_BIN_PATH))?;
         let key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Your key")
@@ -81,15 +80,13 @@ impl Manager {
             repo,
             user,
             user_nonce,
+
             fs_dirty: false,
+            success_message: None,
         })
     }
 
-    pub fn create(data_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir(&data_dir).context(FsErr {
-            path: data_dir.display().to_string(),
-        })?;
-
+    pub fn init(data_dir: PathBuf) -> Result<Self> {
         let user_key = Password::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter new key")
             .with_confirmation("Retype key", "keys do not match")
@@ -127,19 +124,29 @@ impl Manager {
         };
 
         let email = email_input
-            .validate_with(|inp: &String| validate_email(inp))
+            .validate_with(|inp: &String| {
+                EmailAddress::from_str(inp)
+                    .map(|_| ())
+                    .map_err(|err| err.to_string())
+            })
             .interact()?;
 
         let remote = if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Do you want to enter a remote service")
             .interact()?
         {
-            Some(
-                Input::with_theme(&ColorfulTheme::default())
-                    .with_prompt("Enter remote url")
-                    .validate_with(|inp: &String| validate_url(inp))
-                    .interact()?,
-            )
+            let remote_url = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter remote url")
+                .validate_with(|inp: &String| {
+                    Url::parse(inp).map(|_| ()).map_err(|err| err.to_string())
+                })
+                .interact()?;
+
+            let url = Url::parse(&remote_url)?;
+            Some(Remote {
+                host: url.host().context(HostErr {})?.to_string(),
+                url: remote_url,
+            })
         } else {
             None
         };
@@ -155,6 +162,9 @@ impl Manager {
 
         let user_nonce: [u8; 12] = rand::random();
 
+        std::fs::create_dir(&data_dir).context(FsErr {
+            path: data_dir.display().to_string(),
+        })?;
         user.save(&data_dir.join(USER_BIN_PATH), &store_aes, user_nonce)?;
         store.save(&data_dir.join(STORE_BIN_PATH))?;
 
@@ -166,7 +176,7 @@ impl Manager {
         repo.add_ignore_rule(&format!("{STORE_BIN_PATH}.bak\n{USER_BIN_PATH}.bak"))?;
 
         if let Some(remote) = &user.remote {
-            repo.remote("origin", remote)?;
+            repo.remote("origin", &remote.url)?;
         }
 
         let mut index = repo.index()?;
@@ -194,7 +204,9 @@ impl Manager {
             repo,
             user,
             user_nonce,
+
             fs_dirty: false,
+            success_message: None,
         })
     }
 }
@@ -337,7 +349,7 @@ impl Manager {
 }
 
 impl Manager {
-    pub fn save(&self, message: &str) -> Result<()> {
+    pub fn save(self, message: &str) -> Result<Option<String>> {
         if self.fs_dirty {
             let mut index = self.repo.index()?;
 
@@ -374,6 +386,6 @@ impl Manager {
             )?;
         }
 
-        Ok(())
+        Ok(self.success_message)
     }
 }

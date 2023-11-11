@@ -1,9 +1,10 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use std::str::FromStr;
 
-use crate::{
-    styles::STYLES,
-    user::{validate_email, validate_url},
-};
+use clap::{Parser, Subcommand, ValueEnum};
+use email_address::EmailAddress;
+use url::Url;
+
+use crate::styles::STYLES;
 
 #[derive(Parser)]
 #[command(styles=STYLES)]
@@ -182,22 +183,24 @@ pub enum UserSubcommand {
         #[arg(long, short, value_parser = parse_email)]
         email: Option<String>,
 
-        /// set the remote endpoint of user
+        /// set the remote endpoint of user. (pass "-" to remove any added remote)
         #[arg(long, short, value_parser = parse_remote, allow_hyphen_values = true)]
         remote: Option<String>,
     },
 }
 
 fn parse_email(arg: &str) -> Result<String, String> {
-    validate_email(arg)?;
-
-    Ok(arg.to_string())
+    EmailAddress::from_str(arg)
+        .map(|_| arg.to_string())
+        .map_err(|err| err.to_string())
 }
 
 fn parse_remote(arg: &str) -> Result<String, String> {
     if arg != "-" {
-        validate_url(arg)?;
+        return Url::parse(arg)
+            .map(|_| arg.to_string())
+            .map_err(|err| err.to_string());
     }
 
-    return Ok(arg.to_string());
+    Ok(arg.to_string())
 }

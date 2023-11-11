@@ -10,18 +10,43 @@ mod user;
 
 use clap::Parser;
 use cmd::{Cli, CliSubcommand, Store, StoreSubcommand, User, UserSubcommand};
+use dialoguer::{theme::ColorfulTheme, Confirm};
 use error::{DataDirErr, Result};
 use manager::Manager;
 use owo_colors::OwoColorize;
 use snafu::OptionExt;
 
-fn run() -> Result<()> {
+fn run() -> Result<Option<String>> {
     let command = Cli::parse();
-    let mut manager = Manager::new(
-        dirs::data_local_dir()
-            .context(DataDirErr {})?
-            .join("PassManager"),
-    )?;
+
+    let data_dir = dirs::data_local_dir()
+        .context(DataDirErr {})?
+        .join("PassManager");
+
+    let mut manager = if data_dir.exists() {
+        if matches!(command.subcommand, CliSubcommand::Initialize) {
+            Manager::init(data_dir)?;
+
+            return Ok(Some("Store already initialized".to_string()));
+        }
+        Manager::new(data_dir)?
+    } else {
+        if matches!(command.subcommand, CliSubcommand::Initialize) {
+            Manager::init(data_dir)?;
+
+            return Ok(Some("Successfully initialized store".to_string()));
+        }
+
+        println!("{}", "Store doesn't exist.".bright_red());
+        if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Do you want to initialize store?")
+            .interact()?
+        {
+            Manager::init(data_dir)?
+        } else {
+            return Ok(None);
+        }
+    };
 
     match &command.subcommand {
         CliSubcommand::Copy { label } => manager.copy(label)?,
@@ -73,7 +98,9 @@ fn run() -> Result<()> {
 }
 
 fn main() {
-    if let Err(err) = run() {
-        println!("{}", err.to_string().bright_red());
+    match run() {
+        Ok(Some(msg)) => println!("{}", msg.bright_green()),
+        Err(err) => println!("{}", err.to_string().bright_red()),
+        _ => {}
     }
 }

@@ -14,11 +14,10 @@ use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use git2::{Cred, Direction, PushOptions, RemoteCallbacks};
 use hashbrown::HashMap;
 use snafu::{OptionExt, ResultExt};
-use url::Url;
 
 use crate::{
     cmd::SyncDirection,
-    error::{CommandErr, FsErr, HostErr, Result, SplitErr},
+    error::{CommandErr, FsErr, Result, SplitErr},
     manager::{length_validator, Manager},
 };
 
@@ -127,7 +126,7 @@ impl Manager {
     }
 
     pub fn sync(&self, dir: SyncDirection) -> Result<()> {
-        let Some(remote_url) = &self.user.remote else {
+        let Some(user_remote) = &self.user.remote else {
             println!("Remote not set");
             return Ok(());
         };
@@ -140,20 +139,14 @@ impl Manager {
 
                 let mut push_callbacks = RemoteCallbacks::new();
                 push_callbacks.credentials(|_, _, _| {
-                    let cred =
-                        get_remote_credentials(&get_host_from_url(&remote_url).map_err(|_| {
-                            git2::Error::from_str("Couldn't get host from remote url")
-                        })?)
+                    let cred = get_remote_credentials(&user_remote.host)
                         .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
                     Cred::userpass_plaintext(&cred["username"], &cred["password"])
                 });
 
                 let mut conn_callbacks = RemoteCallbacks::new();
                 conn_callbacks.credentials(|_, _, _| {
-                    let cred =
-                        get_remote_credentials(&get_host_from_url(&remote_url).map_err(|_| {
-                            git2::Error::from_str("Couldn't get host from remote url")
-                        })?)
+                    let cred = get_remote_credentials(&user_remote.host)
                         .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
                     Cred::userpass_plaintext(&cred["username"], &cred["password"])
                 });
@@ -228,10 +221,4 @@ fn get_remote_credentials(host: &str) -> Result<HashMap<String, String>> {
     }
 
     Ok(config)
-}
-
-fn get_host_from_url(url: &str) -> Result<String> {
-    let url = Url::parse(url)?;
-
-    Ok(url.host_str().context(HostErr {})?.to_string())
 }

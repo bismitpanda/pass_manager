@@ -29,7 +29,7 @@ pub enum PassManagerErr {
     #[snafu(display("argon2 error: {err}"))]
     Argon2 { err: argon2::Error },
 
-    #[snafu(display("invalid password"))]
+    #[snafu(display("incorrect password"))]
     Aes { err: aes_gcm::Error },
 
     #[snafu(display("rkyv error: {err}"))]
