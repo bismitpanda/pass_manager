@@ -90,6 +90,7 @@ impl Manager {
         }
 
         self.fs_dirty = true;
+        self.success_message = Some("Successfully reset store".to_string());
 
         Ok(())
     }
@@ -121,11 +122,12 @@ impl Manager {
         self.store.key = new_key;
 
         self.fs_dirty = true;
+        self.success_message = Some("Successfully modified store key".to_string());
 
         Ok(())
     }
 
-    pub fn sync(&self, dir: SyncDirection) -> Result<()> {
+    pub fn sync(&mut self, dir: SyncDirection) -> Result<()> {
         let Some(user_remote) = &self.user.remote else {
             println!("Remote not set");
             return Ok(());
@@ -164,10 +166,12 @@ impl Manager {
             SyncDirection::Pull => {}
         }
 
+        self.success_message = Some("Successfully synced store to remote".to_string());
+
         Ok(())
     }
 
-    pub fn nuke(&self, sync: bool, archive: bool) -> Result<()> {
+    pub fn nuke(&mut self, sync: bool, archive: bool) -> Result<()> {
         if sync {
             self.sync(SyncDirection::Push)?;
         }
@@ -187,6 +191,7 @@ impl Manager {
             path: self.data_dir.display().to_string(),
         })?;
 
+        self.success_message = Some("Successfully nuked the data".to_string());
         Ok(())
     }
 }

@@ -108,7 +108,14 @@ impl Manager {
             }
         }
 
+        let fields = [("name", name), ("email", email), ("remote", remote)]
+            .iter()
+            .filter_map(|(name, el)| el.is_some().then_some(*name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
         self.fs_dirty = true;
+        self.success_message = Some(format!("Successfully set user {fields}"));
 
         Ok(())
     }

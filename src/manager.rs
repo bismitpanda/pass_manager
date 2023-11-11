@@ -259,6 +259,7 @@ impl Manager {
         };
 
         self.fs_dirty = true;
+        self.success_message = Some(format!("Successfully added '{label}' to store"));
 
         Ok(())
     }
@@ -269,9 +270,10 @@ impl Manager {
         }
 
         self.fs_dirty = true;
+        self.success_message = Some(format!("Successfully deleted '{label}' from store"));
     }
 
-    pub fn copy(&self, label: &str) -> Result<()> {
+    pub fn copy(&mut self, label: &str) -> Result<()> {
         let Some(item) = self.store.items.get(label) else {
             println!("No item found in store");
             return Ok(());
@@ -285,6 +287,8 @@ impl Manager {
 
         let mut clipboard: ClipboardContext = ClipboardProvider::new()?;
         clipboard.set_contents(String::from_utf8(plaintext)?)?;
+
+        self.success_message = Some(format!("Successfully copied '{label}' to clipboard"));
 
         Ok(())
     }
