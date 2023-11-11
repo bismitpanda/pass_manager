@@ -22,10 +22,7 @@ impl Cli {
                 subcommand: UserSubcommand::Get,
             })
             | CliSubcommand::Store(Store {
-                subcommand: StoreSubcommand::Sync { .. },
-            })
-            | CliSubcommand::Store(Store {
-                subcommand: StoreSubcommand::Nuke { .. },
+                subcommand: StoreSubcommand::Sync { .. } | StoreSubcommand::Nuke { .. },
             }) => String::new(),
 
             CliSubcommand::Add { ref label, .. } => format!("store add {label}"),
@@ -107,6 +104,7 @@ pub enum CliSubcommand {
     Initialize,
 
     /// Check history
+    #[command(visible_alias = "log")]
     History,
 
     /// Subcommands concerning the store

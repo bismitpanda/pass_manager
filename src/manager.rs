@@ -117,7 +117,7 @@ impl Manager {
             .default(
                 global_config
                     .get_string("user.name")
-                    .unwrap_or(whoami::realname()),
+                    .unwrap_or_else(|_| whoami::realname()),
             )
             .interact()?;
 
