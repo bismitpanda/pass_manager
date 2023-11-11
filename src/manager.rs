@@ -11,7 +11,7 @@ use argon2::Argon2;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use email_address::EmailAddress;
-use git2::{Config, ObjectType, Repository, RepositoryInitOptions, Signature};
+use git2::{Config, Repository, RepositoryInitOptions, Signature};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
@@ -375,8 +375,7 @@ impl Manager {
                 .repo
                 .head()?
                 .resolve()?
-                .peel(ObjectType::Commit)?
-                .into_commit()
+                .peel_to_commit()
                 .map_err(|_| git2::Error::from_str("Couldn't find commit"))?;
 
             let tree = self.repo.find_tree(oid)?;

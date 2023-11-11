@@ -6,10 +6,9 @@ use url::Url;
 
 use crate::styles::STYLES;
 
+/// A Cli based Password Manager with remote sync support
 #[derive(Parser)]
-#[command(styles=STYLES)]
-#[command(author, about, version, long_about = None)]
-#[command(propagate_version = true, infer_subcommands = true)]
+#[command(styles = STYLES, author, about, version, long_about = None, propagate_version = true, infer_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub subcommand: CliSubcommand,

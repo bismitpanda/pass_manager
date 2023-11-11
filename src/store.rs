@@ -11,7 +11,7 @@ use aes_gcm::{
 };
 use argon2::Argon2;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
-use git2::{Cred, Direction, PushOptions, RemoteCallbacks};
+use git2::{Cred, Direction, FetchOptions, PushOptions, RemoteCallbacks};
 use hashbrown::HashMap;
 use snafu::{OptionExt, ResultExt};
 
@@ -161,12 +161,114 @@ impl Manager {
                     &["refs/heads/main:refs/heads/main"],
                     Some(&mut push_options),
                 )?;
+
+                self.success_message = Some("Successfully pushed store to remote".to_string());
             }
 
-            SyncDirection::Pull => {}
-        }
+            SyncDirection::Pull => {
+                let mut remote = self.repo.find_remote("origin")?;
 
-        self.success_message = Some("Successfully synced store to remote".to_string());
+                let mut callbacks = RemoteCallbacks::new();
+                callbacks.credentials(|_, _, _| {
+                    let cred = get_remote_credentials(&user_remote.host)
+                        .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
+                    Cred::userpass_plaintext(&cred["username"], &cred["password"])
+                });
+
+                let mut fetch_options = FetchOptions::new();
+                fetch_options.remote_callbacks(callbacks);
+
+                remote.fetch(&["main"], Some(&mut fetch_options), None)?;
+
+                let fetch_head = self.repo.find_reference("FETCH_HEAD")?;
+                let fetch_commit = self.repo.reference_to_annotated_commit(&fetch_head)?;
+
+                let (analysis, _) = self.repo.merge_analysis(&[&fetch_commit])?;
+
+                if analysis.is_fast_forward() {
+                    match self.repo.find_reference("refs/heads/main") {
+                        Ok(mut r) => {
+                            let name = match r.name() {
+                                Some(s) => s.to_string(),
+                                None => String::from_utf8_lossy(r.name_bytes()).to_string(),
+                            };
+
+                            r.set_target(
+                                fetch_commit.id(),
+                                &format!(
+                                    "Fast-Forward: Setting {} to id: {}",
+                                    name,
+                                    fetch_commit.id()
+                                ),
+                            )?;
+
+                            self.repo.set_head(&name)?;
+                            self.repo.checkout_head(Some(
+                                git2::build::CheckoutBuilder::default().force(),
+                            ))?;
+                        }
+                        Err(_) => {
+                            self.repo.reference(
+                                "refs/heads/main",
+                                fetch_commit.id(),
+                                true,
+                                &format!("Setting main to {}", fetch_commit.id()),
+                            )?;
+
+                            self.repo.set_head("refs/heads/main")?;
+                            self.repo.checkout_head(Some(
+                                git2::build::CheckoutBuilder::default()
+                                    .allow_conflicts(true)
+                                    .conflict_style_merge(true)
+                                    .force(),
+                            ))?;
+                        }
+                    };
+                } else if analysis.is_normal() {
+                    let head_commit = self
+                        .repo
+                        .reference_to_annotated_commit(&self.repo.head()?)?;
+
+                    let local_tree = self.repo.find_commit(head_commit.id())?.tree()?;
+                    let remote_tree = self.repo.find_commit(fetch_commit.id())?.tree()?;
+
+                    let ancestor = self
+                        .repo
+                        .find_commit(self.repo.merge_base(head_commit.id(), fetch_commit.id())?)?
+                        .tree()?;
+
+                    let mut idx =
+                        self.repo
+                            .merge_trees(&ancestor, &local_tree, &remote_tree, None)?;
+
+                    if idx.has_conflicts() {
+                        self.repo.checkout_index(Some(&mut idx), None)?;
+                        return Ok(());
+                    }
+
+                    let result_tree = self.repo.find_tree(idx.write_tree_to(&self.repo)?)?;
+
+                    let msg = format!("Merge: {} into {}", fetch_commit.id(), head_commit.id());
+                    let sig = self.repo.signature()?;
+
+                    let local_commit = self.repo.find_commit(head_commit.id())?;
+                    let remote_commit = self.repo.find_commit(fetch_commit.id())?;
+
+                    self.repo.commit(
+                        Some("HEAD"),
+                        &sig,
+                        &sig,
+                        &msg,
+                        &result_tree,
+                        &[&local_commit, &remote_commit],
+                    )?;
+
+                    self.repo.checkout_head(None)?;
+                }
+
+                self.success_message = Some("Successfully pulled store from remote".to_string());
+            }
+        }
 
         Ok(())
     }
