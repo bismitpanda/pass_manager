@@ -18,7 +18,7 @@ const EMAIL_RE: &str = r"^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-
 pub struct User {
     pub name: String,
     pub email: String,
-    pub remote: Option<String>,
+    pub remote: String,
 }
 
 impl User {
@@ -70,11 +70,12 @@ impl Manager {
             "Email".bright_yellow(),
             self.user.email.bright_cyan(),
             "Remote".bright_yellow(),
-            self.user
-                .remote
-                .clone()
-                .unwrap_or_else(|| "Not set".to_string())
-                .bright_cyan()
+            if self.user.remote.is_empty() {
+                self.user.remote.clone()
+            } else {
+                "Not set".to_string()
+            }
+            .bright_cyan()
         );
     }
 
@@ -93,17 +94,20 @@ impl Manager {
         }
 
         if let Some(remote) = remote {
-            if self.repo.find_remote("origin").is_ok() {
+            if remote.is_empty() {
+                if self.repo.find_remote("origin").is_ok() {
+                    self.repo.remote_delete("origin")?;
+                }
+            } else if self.repo.find_remote("origin").is_ok() {
                 self.repo.remote_set_url("origin", remote)?;
             } else {
                 self.repo.remote("origin", remote)?;
             }
 
-            self.repo.remote_set_url("origin", remote)?;
-            self.user.remote = Some(remote.clone());
+            self.user.remote = remote.clone();
         }
 
-        self.dirty = true;
+        self.fs_dirty = true;
 
         Ok(())
     }

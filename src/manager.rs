@@ -31,7 +31,7 @@ pub struct Manager {
     pub user: User,
     pub user_nonce: [u8; 12],
 
-    pub dirty: bool,
+    pub fs_dirty: bool,
 }
 
 pub fn length_validator(inp: &str) -> Result<(), String> {
@@ -81,7 +81,7 @@ impl Manager {
             repo,
             user,
             user_nonce,
-            dirty: false,
+            fs_dirty: false,
         })
     }
 
@@ -134,14 +134,12 @@ impl Manager {
             .with_prompt("Do you want to enter a remote service")
             .interact()?
         {
-            let url = Input::with_theme(&ColorfulTheme::default())
+            Input::with_theme(&ColorfulTheme::default())
                 .with_prompt("Enter remote url")
                 .validate_with(|inp: &String| validate_url(inp))
-                .interact()?;
-
-            Some(url)
+                .interact()?
         } else {
-            None
+            String::new()
         };
 
         let user = User {
@@ -165,8 +163,8 @@ impl Manager {
 
         repo.add_ignore_rule(&format!("{STORE_BIN_PATH}.bak\n{USER_BIN_PATH}.bak"))?;
 
-        if let Some(remote) = &user.remote {
-            repo.remote("origin", remote)?;
+        if user.remote.is_empty() {
+            repo.remote("origin", &user.remote)?;
         }
 
         let mut index = repo.index()?;
@@ -181,7 +179,7 @@ impl Manager {
             Some("HEAD"),
             &signature,
             &signature,
-            "Initialize store",
+            "store initialize",
             &repo.find_tree(oid)?,
             &[],
         )?;
@@ -194,7 +192,7 @@ impl Manager {
             repo,
             user,
             user_nonce,
-            dirty: false,
+            fs_dirty: false,
         })
     }
 }
@@ -224,11 +222,11 @@ impl Manager {
         };
 
         let nonce_slice: [u8; 12] = rand::random();
-        let nonce = Nonce::from_slice(&nonce_slice);
+        let aes_nonce = Nonce::from_slice(&nonce_slice);
 
         let ciphertext = self
             .store_aes
-            .encrypt(nonce, password.as_bytes().as_ref())?;
+            .encrypt(aes_nonce, password.as_bytes().as_ref())?;
 
         match self.store.items.entry(label.to_string()) {
             Entry::Vacant(entry) => {
@@ -246,7 +244,7 @@ impl Manager {
             }
         };
 
-        self.dirty = true;
+        self.fs_dirty = true;
 
         Ok(())
     }
@@ -256,7 +254,7 @@ impl Manager {
             println!("{}", "No item found in store".bright_red());
         }
 
-        self.dirty = true;
+        self.fs_dirty = true;
     }
 
     pub fn copy(&self, label: &str) -> Result<()> {
@@ -272,7 +270,6 @@ impl Manager {
         let plaintext = self.store_aes.decrypt(nonce.into(), password.as_slice())?;
 
         let mut clipboard: ClipboardContext = ClipboardProvider::new()?;
-
         clipboard.set_contents(String::from_utf8(plaintext)?)?;
 
         Ok(())
@@ -284,7 +281,7 @@ impl Manager {
             return Ok(());
         }
 
-        let mut t = Table::new(["Labels".to_owned(), "Passwords".to_owned()]);
+        let mut table = Table::new(["Labels".to_owned(), "Passwords".to_owned()]);
 
         for (label, item) in &self.store.items {
             let Item { nonce, password } = &item;
@@ -292,10 +289,10 @@ impl Manager {
             let nonce = Nonce::from_slice(nonce);
             let plaintext = self.store_aes.decrypt(nonce, password.as_slice())?;
 
-            t.insert([label.to_owned(), String::from_utf8(plaintext)?]);
+            table.insert([label.to_owned(), String::from_utf8(plaintext)?]);
         }
 
-        t.display()?;
+        table.display()?;
 
         Ok(())
     }
@@ -304,10 +301,34 @@ impl Manager {
         let mut revwalk = self.repo.revwalk()?;
         revwalk.push_head()?;
 
+        let mut table = Table::new([
+            "Binary".to_string(),
+            "Action".to_string(),
+            "Value".to_string(),
+        ]);
+
         for commit in revwalk {
-            let commit = self.repo.find_commit(commit?)?;
-            println!("{}", commit.message().context(InvalidCommitMessageErr {})?);
+            let commit = self
+                .repo
+                .find_commit(commit?)?
+                .message()
+                .context(InvalidCommitMessageErr {})?
+                .to_string();
+
+            let mut commit_parts = commit.split(' ').map(String::from).collect::<Vec<_>>();
+
+            if commit_parts.len() == 2 {
+                commit_parts.push("-".to_string());
+            }
+
+            table.insert([
+                commit_parts[0].clone(),
+                commit_parts[1].clone(),
+                commit_parts[2].clone(),
+            ]);
         }
+
+        table.display()?;
 
         Ok(())
     }
@@ -315,43 +336,41 @@ impl Manager {
 
 impl Manager {
     pub fn save(&self, message: &str) -> Result<()> {
-        if !(self.dirty || self.dirty) {
-            return Ok(());
-        }
+        if self.fs_dirty {
+            let mut index = self.repo.index()?;
 
-        let mut index = self.repo.index()?;
+            if self.fs_dirty {
+                self.store.save(&self.data_dir.join(STORE_BIN_PATH))?;
+                self.user.save(
+                    &self.data_dir.join(USER_BIN_PATH),
+                    &self.store_aes,
+                    self.user_nonce,
+                )?;
 
-        if self.dirty {
-            self.store.save(&self.data_dir.join(STORE_BIN_PATH))?;
-            self.user.save(
-                &self.data_dir.join(USER_BIN_PATH),
-                &self.store_aes,
-                self.user_nonce,
+                index.add_path(Path::new(USER_BIN_PATH))?;
+                index.add_path(Path::new(STORE_BIN_PATH))?;
+            }
+
+            let oid = index.write_tree()?;
+            let signature = Signature::now(&self.user.name, &self.user.email)?;
+            let parent_commit = self
+                .repo
+                .head()?
+                .resolve()?
+                .peel(ObjectType::Commit)?
+                .into_commit()
+                .map_err(|_| git2::Error::from_str("Couldn't find commit"))?;
+
+            let tree = self.repo.find_tree(oid)?;
+            self.repo.commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                message,
+                &tree,
+                &[&parent_commit],
             )?;
-
-            index.add_path(Path::new(USER_BIN_PATH))?;
-            index.add_path(Path::new(STORE_BIN_PATH))?;
         }
-
-        let oid = index.write_tree()?;
-        let signature = Signature::now(&self.user.name, &self.user.email)?;
-        let parent_commit = self
-            .repo
-            .head()?
-            .resolve()?
-            .peel(ObjectType::Commit)?
-            .into_commit()
-            .map_err(|_| git2::Error::from_str("Couldn't find commit"))?;
-
-        let tree = self.repo.find_tree(oid)?;
-        self.repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            message,
-            &tree,
-            &[&parent_commit],
-        )?;
 
         Ok(())
     }

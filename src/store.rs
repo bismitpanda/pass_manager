@@ -90,7 +90,7 @@ impl Manager {
             self.store.items = HashMap::new();
         }
 
-        self.dirty = true;
+        self.fs_dirty = true;
 
         Ok(())
     }
@@ -121,13 +121,13 @@ impl Manager {
 
         self.store.key = new_key;
 
-        self.dirty = true;
+        self.fs_dirty = true;
 
         Ok(())
     }
 
     pub fn sync(&self, dir: SyncDirection) -> Result<()> {
-        let Some(url) = &self.user.remote else {
+        if self.user.remote.is_empty() {
             println!("Remote not set");
             return Ok(());
         };
@@ -141,9 +141,9 @@ impl Manager {
                 let mut push_callbacks = RemoteCallbacks::new();
                 push_callbacks.credentials(|_, _, _| {
                     let cred =
-                        get_remote_credentials(&get_host_from_url(url).map_err(|_| {
-                            git2::Error::from_str("Couldn't get host from remote url")
-                        })?)
+                        get_remote_credentials(&get_host_from_url(&self.user.remote).map_err(
+                            |_| git2::Error::from_str("Couldn't get host from remote url"),
+                        )?)
                         .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
                     Cred::userpass_plaintext(&cred["username"], &cred["password"])
                 });
@@ -151,9 +151,9 @@ impl Manager {
                 let mut conn_callbacks = RemoteCallbacks::new();
                 conn_callbacks.credentials(|_, _, _| {
                     let cred =
-                        get_remote_credentials(&get_host_from_url(url).map_err(|_| {
-                            git2::Error::from_str("Couldn't get host from remote url")
-                        })?)
+                        get_remote_credentials(&get_host_from_url(&self.user.remote).map_err(
+                            |_| git2::Error::from_str("Couldn't get host from remote url"),
+                        )?)
                         .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
                     Cred::userpass_plaintext(&cred["username"], &cred["password"])
                 });

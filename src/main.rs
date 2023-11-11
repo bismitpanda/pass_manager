@@ -61,7 +61,7 @@ fn run() -> Result<()> {
                 name,
                 email,
                 remote,
-            } => manager.set_user(name, email, remote)?,
+            } => manager.set_user(name, email, &Some(remote.clone()))?,
         },
 
         CliSubcommand::Initialize => {}

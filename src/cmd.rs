@@ -46,11 +46,16 @@ impl Cli {
                         remote,
                     },
             }) => {
-                let fields = [("name", name), ("email", email), ("remote", remote)]
+                let mut fields = [("name", name), ("email", email)]
                     .iter()
                     .filter_map(|(name, el)| el.is_some().then_some(*name))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .collect::<Vec<_>>();
+
+                if !remote.is_empty() {
+                    fields.push("remote");
+                }
+
+                let fields = fields.join(", ");
                 format!("user set {fields}")
             }
         }
@@ -179,7 +184,7 @@ pub enum UserSubcommand {
         email: Option<String>,
 
         /// set the remote endpoint of user
-        #[arg(long, short)]
-        remote: Option<String>,
+        #[arg(long, short, default_value_t = String::new())]
+        remote: String,
     },
 }
