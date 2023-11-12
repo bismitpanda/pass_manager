@@ -8,6 +8,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use argon2::Argon2;
+use chrono::{FixedOffset, NaiveDateTime};
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use email_address::EmailAddress;
@@ -19,10 +20,10 @@ use snafu::{OptionExt, ResultExt};
 use url::Url;
 
 use crate::{
-    error::{FsErr, HostErr, InvalidCommitMessageErr, Result},
+    error::{ChronoErr, FsErr, InvalidCommitMessageErr, Result},
     store::{Item, Store},
     table::Table,
-    user::{Remote, User},
+    user::User,
 };
 
 pub struct Manager {
@@ -131,7 +132,9 @@ impl Manager {
             })
             .interact()?;
 
-        let remote = if Confirm::with_theme(&ColorfulTheme::default())
+        let mut user = User::new(name, email);
+
+        if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Do you want to enter a remote service")
             .interact()?
         {
@@ -142,19 +145,7 @@ impl Manager {
                 })
                 .interact()?;
 
-            let url = Url::parse(&remote_url)?;
-            Some(Remote {
-                host: url.host().context(HostErr {})?.to_string(),
-                url: remote_url,
-            })
-        } else {
-            None
-        };
-
-        let user = User {
-            name,
-            email,
-            remote,
+            user.set_remote(&remote_url)?;
         };
 
         let store = Store::new(encrypted_key, salt, nonce_slice);
@@ -323,26 +314,38 @@ impl Manager {
             "Binary".to_string(),
             "Action".to_string(),
             "Value".to_string(),
+            "Time".to_string(),
         ]);
 
         for commit in revwalk {
-            let commit = self
-                .repo
-                .find_commit(commit?)?
+            let commit = self.repo.find_commit(commit?)?;
+
+            let commit_message = commit
                 .message()
-                .context(InvalidCommitMessageErr {})?
+                .context(InvalidCommitMessageErr)?
                 .to_string();
 
-            let mut commit_parts = commit.split(' ').map(String::from).collect::<Vec<_>>();
+            let mut commit_parts = commit_message
+                .split(' ')
+                .map(String::from)
+                .collect::<Vec<_>>();
 
             if commit_parts.len() == 2 {
                 commit_parts.push("-".to_string());
             }
 
+            let commit_time = commit.time();
+            let time = NaiveDateTime::from_timestamp_opt(commit_time.seconds(), 0)
+                .context(ChronoErr { item: "time" })?;
+            let tz = FixedOffset::east_opt(commit_time.offset_minutes() * 60)
+                .context(ChronoErr { item: "offset" })?;
+            let time = time + tz;
+
             table.insert([
                 commit_parts[0].clone(),
                 commit_parts[1].clone(),
                 commit_parts[2].clone(),
+                time.to_string(),
             ]);
         }
 

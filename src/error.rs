@@ -58,6 +58,12 @@ pub enum PassManagerErr {
 
     #[snafu(display("git error: commit message is not valid utf-8"))]
     InvalidCommitMessage,
+
+    #[snafu(display("chrono error: couldn't parse {item}"))]
+    Chrono { item: String },
+
+    #[snafu(display("credential error: could not find {key} in creds"))]
+    Creds { key: String },
 }
 
 pub type Result<T, E = PassManagerErr> = std::result::Result<T, E>;

@@ -20,7 +20,7 @@ fn run() -> Result<Option<String>> {
     let command = Cli::parse();
 
     let data_dir = dirs::data_local_dir()
-        .context(DataDirErr {})?
+        .context(DataDirErr)?
         .join("PassManager");
 
     let mut manager = if data_dir.exists() {

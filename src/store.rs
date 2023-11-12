@@ -1,9 +1,4 @@
-use std::{
-    fs::File,
-    io::prelude::*,
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::{fs::File, path::PathBuf};
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
@@ -13,11 +8,11 @@ use argon2::Argon2;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use git2::{Cred, Direction, FetchOptions, PushOptions, RemoteCallbacks};
 use hashbrown::HashMap;
-use snafu::{OptionExt, ResultExt};
+use snafu::ResultExt;
 
 use crate::{
     cmd::SyncDirection,
-    error::{CommandErr, FsErr, Result, SplitErr},
+    error::{FsErr, Result},
     manager::{length_validator, Manager},
 };
 
@@ -133,28 +128,21 @@ impl Manager {
             return Ok(());
         };
 
+        let mut remote = self.repo.find_remote("origin")?;
+        let mut cb = RemoteCallbacks::new();
+        cb.credentials(|_, _, _| {
+            Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
+        });
+
         match dir {
             SyncDirection::Push => {
-                let mut remote = self.repo.find_remote("origin")?;
+                remote.connect_auth(Direction::Push, Some(cb), None)?;
 
                 let mut push_options = PushOptions::new();
-
                 let mut push_callbacks = RemoteCallbacks::new();
                 push_callbacks.credentials(|_, _, _| {
-                    let cred = get_remote_credentials(&user_remote.host)
-                        .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
-                    Cred::userpass_plaintext(&cred["username"], &cred["password"])
+                    Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
                 });
-
-                let mut conn_callbacks = RemoteCallbacks::new();
-                conn_callbacks.credentials(|_, _, _| {
-                    let cred = get_remote_credentials(&user_remote.host)
-                        .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
-                    Cred::userpass_plaintext(&cred["username"], &cred["password"])
-                });
-
-                remote.connect_auth(Direction::Push, Some(conn_callbacks), None)?;
-
                 push_options.remote_callbacks(push_callbacks);
 
                 remote.push(
@@ -166,17 +154,8 @@ impl Manager {
             }
 
             SyncDirection::Pull => {
-                let mut remote = self.repo.find_remote("origin")?;
-
-                let mut callbacks = RemoteCallbacks::new();
-                callbacks.credentials(|_, _, _| {
-                    let cred = get_remote_credentials(&user_remote.host)
-                        .map_err(|_| git2::Error::from_str("Couldn't get credentials"))?;
-                    Cred::userpass_plaintext(&cred["username"], &cred["password"])
-                });
-
                 let mut fetch_options = FetchOptions::new();
-                fetch_options.remote_callbacks(callbacks);
+                fetch_options.remote_callbacks(cb);
 
                 remote.fetch(&["main"], Some(&mut fetch_options), None)?;
 
@@ -186,81 +165,73 @@ impl Manager {
                 let (analysis, _) = self.repo.merge_analysis(&[&fetch_commit])?;
 
                 if analysis.is_fast_forward() {
-                    match self.repo.find_reference("refs/heads/main") {
-                        Ok(mut r) => {
-                            let name = match r.name() {
-                                Some(s) => s.to_string(),
-                                None => String::from_utf8_lossy(r.name_bytes()).to_string(),
-                            };
+                    if let Ok(mut r) = self.repo.find_reference("refs/heads/main") {
+                        let name = r.name().map_or_else(
+                            || String::from_utf8_lossy(r.name_bytes()).to_string(),
+                            ToString::to_string,
+                        );
 
-                            r.set_target(
-                                fetch_commit.id(),
-                                &format!(
-                                    "Fast-Forward: Setting {} to id: {}",
-                                    name,
-                                    fetch_commit.id()
-                                ),
-                            )?;
+                        r.set_target(
+                            fetch_commit.id(),
+                            &format!(
+                                "Fast-Forward: Setting {} to id: {}",
+                                name,
+                                fetch_commit.id()
+                            ),
+                        )?;
 
-                            self.repo.set_head(&name)?;
-                            self.repo.checkout_head(Some(
-                                git2::build::CheckoutBuilder::default().force(),
-                            ))?;
-                        }
-                        Err(_) => {
-                            self.repo.reference(
-                                "refs/heads/main",
-                                fetch_commit.id(),
-                                true,
-                                &format!("Setting main to {}", fetch_commit.id()),
-                            )?;
+                        self.repo.set_head(&name)?;
+                        self.repo
+                            .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+                    } else {
+                        self.repo.reference(
+                            "refs/heads/main",
+                            fetch_commit.id(),
+                            true,
+                            &format!("Setting main to {}", fetch_commit.id()),
+                        )?;
 
-                            self.repo.set_head("refs/heads/main")?;
-                            self.repo.checkout_head(Some(
-                                git2::build::CheckoutBuilder::default()
-                                    .allow_conflicts(true)
-                                    .conflict_style_merge(true)
-                                    .force(),
-                            ))?;
-                        }
+                        self.repo.set_head("refs/heads/main")?;
+                        self.repo.checkout_head(Some(
+                            git2::build::CheckoutBuilder::default()
+                                .allow_conflicts(true)
+                                .conflict_style_merge(true)
+                                .force(),
+                        ))?;
                     };
                 } else if analysis.is_normal() {
                     let head_commit = self
                         .repo
                         .reference_to_annotated_commit(&self.repo.head()?)?;
 
-                    let local_tree = self.repo.find_commit(head_commit.id())?.tree()?;
-                    let remote_tree = self.repo.find_commit(fetch_commit.id())?.tree()?;
-
                     let ancestor = self
                         .repo
                         .find_commit(self.repo.merge_base(head_commit.id(), fetch_commit.id())?)?
                         .tree()?;
 
-                    let mut idx =
-                        self.repo
-                            .merge_trees(&ancestor, &local_tree, &remote_tree, None)?;
+                    let mut index = self.repo.merge_trees(
+                        &ancestor,
+                        &self.repo.find_commit(head_commit.id())?.tree()?,
+                        &self.repo.find_commit(fetch_commit.id())?.tree()?,
+                        None,
+                    )?;
 
-                    if idx.has_conflicts() {
-                        self.repo.checkout_index(Some(&mut idx), None)?;
-                        return Ok(());
+                    if index.has_conflicts() {
+                        return Ok(self.repo.checkout_index(Some(&mut index), None)?);
                     }
 
-                    let result_tree = self.repo.find_tree(idx.write_tree_to(&self.repo)?)?;
-
-                    let msg = format!("Merge: {} into {}", fetch_commit.id(), head_commit.id());
                     let sig = self.repo.signature()?;
-
-                    let local_commit = self.repo.find_commit(head_commit.id())?;
-                    let remote_commit = self.repo.find_commit(fetch_commit.id())?;
 
                     self.repo.commit(
                         Some("HEAD"),
                         &sig,
                         &sig,
-                        &msg,
-                        &result_tree,
-                        &[&local_commit, &remote_commit],
+                        &format!("store pull {}:{}", fetch_commit.id(), head_commit.id()),
+                        &self.repo.find_tree(index.write_tree_to(&self.repo)?)?,
+                        &[
+                            &self.repo.find_commit(head_commit.id())?,
+                            &self.repo.find_commit(fetch_commit.id())?,
+                        ],
                     )?;
 
                     self.repo.checkout_head(None)?;
@@ -296,36 +267,4 @@ impl Manager {
         self.success_message = Some("Successfully nuked the data".to_string());
         Ok(())
     }
-}
-
-fn get_remote_credentials(host: &str) -> Result<HashMap<String, String>> {
-    let command = Command::new("git")
-        .args(["credential", "fill"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    command
-        .stdin
-        .context(CommandErr {
-            fd: "stdin".to_string(),
-        })?
-        .write_all(format!("protocol=https\nhost={host}").as_bytes())?;
-
-    let mut s = String::new();
-    command
-        .stdout
-        .context(CommandErr {
-            fd: "stdin".to_string(),
-        })?
-        .read_to_string(&mut s)?;
-
-    let mut config = HashMap::new();
-
-    for line in s.split_terminator('\n') {
-        let (k, v) = line.split_once('=').context(SplitErr {})?;
-        config.insert(k.into(), v.into());
-    }
-
-    Ok(config)
 }

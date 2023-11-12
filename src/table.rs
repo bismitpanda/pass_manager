@@ -54,7 +54,7 @@ impl<const N: usize> Table<N> {
     pub fn display(self) -> Result<()> {
         let mut buf = BufWriter::new(Vec::new());
 
-        let (&last_max, rest_maxes) = self.maxes.split_last().context(SplitErr {})?;
+        let (&last_max, rest_maxes) = self.maxes.split_last().context(SplitErr)?;
 
         write!(buf, "{}", TOP_LEFT_CORNER.bright_yellow())?;
         for &max in rest_maxes {
