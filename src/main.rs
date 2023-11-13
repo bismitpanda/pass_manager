@@ -66,6 +66,12 @@ fn run() -> Result<Option<String>> {
             manager.add(label, *input, *len, *special_chars, *overwrite)?;
         }
 
+        CliSubcommand::Initialize => unreachable!(),
+
+        CliSubcommand::History => manager.history()?,
+
+        CliSubcommand::Undo { id } => manager.undo(id)?,
+
         CliSubcommand::Store(Store { subcommand }) => {
             match subcommand {
                 StoreSubcommand::Reset => manager.reset()?,
@@ -87,10 +93,6 @@ fn run() -> Result<Option<String>> {
                 remote,
             } => manager.set_user(name, email, remote)?,
         },
-
-        CliSubcommand::Initialize => unreachable!(),
-
-        CliSubcommand::History => manager.history()?,
     }
 
     manager.save(&command.to_commit_message())
@@ -100,6 +102,6 @@ fn main() {
     match run() {
         Ok(Some(msg)) => println!("{}", msg.bright_green()),
         Err(err) => println!("{}", err.to_string().bright_red()),
-        _ => {}
+        _ => (),
     }
 }

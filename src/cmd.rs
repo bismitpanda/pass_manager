@@ -29,8 +29,16 @@ impl Cli {
             }) => String::new(),
 
             CliSubcommand::Add { ref label, .. } => format!("store add {label}"),
+
             CliSubcommand::Delete { ref label } => {
                 format!("store delete {label}")
+            }
+
+            CliSubcommand::Undo { id } => {
+                format!(
+                    "any undo{}",
+                    id.as_ref().map_or_else(String::new, |id| format!(" {id}"))
+                )
             }
 
             CliSubcommand::Store(Store {
@@ -53,7 +61,7 @@ impl Cli {
                     .iter()
                     .filter_map(|(name, el)| el.is_some().then_some(*name))
                     .collect::<Vec<_>>()
-                    .join(", ");
+                    .join(",");
 
                 format!("user set {fields}")
             }
@@ -110,6 +118,9 @@ pub enum CliSubcommand {
     /// Check history
     #[command(visible_alias = "log")]
     History,
+
+    /// Undo a step back or to provided id
+    Undo { id: Option<String> },
 
     /// Subcommands concerning the store
     Store(Store),

@@ -16,7 +16,7 @@ use crate::{
     manager::{length_validator, Manager},
 };
 
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
 #[archive(check_bytes)]
 pub struct Item {
     pub nonce: [u8; 12],
@@ -134,16 +134,18 @@ impl Manager {
             Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
         });
 
+        cb.transfer_progress(|progress| true);
+
         match dir {
             SyncDirection::Push => {
                 remote.connect_auth(Direction::Push, Some(cb), None)?;
 
                 let mut push_options = PushOptions::new();
-                let mut push_callbacks = RemoteCallbacks::new();
-                push_callbacks.credentials(|_, _, _| {
+                let mut push_cb = RemoteCallbacks::new();
+                push_cb.credentials(|_, _, _| {
                     Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
                 });
-                push_options.remote_callbacks(push_callbacks);
+                push_options.remote_callbacks(push_cb);
 
                 remote.push(
                     &["refs/heads/main:refs/heads/main"],

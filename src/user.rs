@@ -23,7 +23,7 @@ pub struct Remote {
     pub password: String,
 }
 
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
 #[archive(check_bytes)]
 pub struct User {
     pub name: String,

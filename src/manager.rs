@@ -12,7 +12,7 @@ use chrono::{FixedOffset, NaiveDateTime};
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use email_address::EmailAddress;
-use git2::{Config, Repository, RepositoryInitOptions, Signature};
+use git2::{Config, Oid, Repository, RepositoryInitOptions, Signature};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
@@ -20,7 +20,10 @@ use snafu::{OptionExt, ResultExt};
 use url::Url;
 
 use crate::{
-    error::{ChronoErr, FsErr, InvalidCommitMessageErr, Result},
+    error::{
+        ChronoErr, CommitMsgFormatErr, FsErr, InvalidCommitMessageUtf8Err, InvalidShortIdErr,
+        PreviousVersionErr, Result,
+    },
     store::{Item, Store},
     table::Table,
     user::User,
@@ -315,24 +318,14 @@ impl Manager {
             "Action".to_string(),
             "Value".to_string(),
             "Time".to_string(),
+            "Id".to_string(),
         ]);
 
-        for commit in revwalk {
-            let commit = self.repo.find_commit(commit?)?;
+        for oid in revwalk {
+            let commit = self.repo.find_commit(oid?)?;
 
-            let commit_message = commit
-                .message()
-                .context(InvalidCommitMessageErr)?
-                .to_string();
-
-            let mut commit_parts = commit_message
-                .split(' ')
-                .map(String::from)
-                .collect::<Vec<_>>();
-
-            if commit_parts.len() == 2 {
-                commit_parts.push("-".to_string());
-            }
+            let commit_message = commit.message().context(InvalidCommitMessageUtf8Err)?;
+            let commit_parts = parse_commit_message(commit_message);
 
             let commit_time = commit.time();
             let time = NaiveDateTime::from_timestamp_opt(commit_time.seconds(), 0)
@@ -345,11 +338,134 @@ impl Manager {
                 commit_parts[0].clone(),
                 commit_parts[1].clone(),
                 commit_parts[2].clone(),
-                time.to_string(),
+                time.format("%e %b %y %H:%M").to_string(),
+                commit
+                    .into_object()
+                    .short_id()?
+                    .as_str()
+                    .context(InvalidShortIdErr)?
+                    .to_string(),
             ]);
         }
 
         table.display()?;
+
+        Ok(())
+    }
+
+    pub fn undo(&mut self, id: &Option<String>) -> Result<()> {
+        let commit = id.as_ref().map_or_else(
+            || {
+                self.repo
+                    .head()?
+                    .resolve()?
+                    .peel_to_commit()
+                    .map_err(|_| git2::Error::from_str("Couldn't find commit"))
+            },
+            |id| self.repo.find_commit(Oid::from_str(id)?),
+        )?;
+
+        let message = commit
+            .message()
+            .context(InvalidCommitMessageUtf8Err)?
+            .to_string();
+        let parts = parse_commit_message(&message);
+
+        drop(commit);
+
+        match parts[0].as_str() {
+            "store" => match parts[1].as_str() {
+                "add" => self.delete(&parts[2]),
+                action @ ("delete" | "reset") => {
+                    let parent_commit = id
+                        .as_ref()
+                        .map_or_else(
+                            || {
+                                self.repo
+                                    .head()?
+                                    .resolve()?
+                                    .peel_to_commit()
+                                    .map_err(|_| git2::Error::from_str("Couldn't find commit"))
+                            },
+                            |id| self.repo.find_commit(Oid::from_str(id)?),
+                        )?
+                        .parent(0)?;
+
+                    let tree = parent_commit.tree()?;
+                    let blob = tree
+                        .get_name(STORE_BIN_PATH)
+                        .context(PreviousVersionErr {
+                            bin: STORE_BIN_PATH,
+                        })?
+                        .to_object(&self.repo)?
+                        .into_blob()
+                        .map_err(|_| git2::Error::from_str("Couldn't convert object to blob"))?;
+
+                    let old_store =
+                        rkyv::from_bytes::<Store>(blob.content()).map_err(|err| err.to_string())?;
+
+                    if action == "delete" {
+                        self.store
+                            .items
+                            .insert(parts[2].clone(), old_store.items[&parts[2]].clone());
+                    } else if action == "reset" {
+                        self.store.items = old_store.items;
+                    }
+                }
+
+                "modify" => {
+                    println!("{}", "Cannot undo password modication".bright_red());
+                }
+                _ => return Err(CommitMsgFormatErr { message }.build()),
+            },
+
+            "user" => match parts[1].as_str() {
+                "set" => {
+                    let parent_commit = id
+                        .as_ref()
+                        .map_or_else(
+                            || {
+                                self.repo
+                                    .head()?
+                                    .resolve()?
+                                    .peel_to_commit()
+                                    .map_err(|_| git2::Error::from_str("Couldn't find commit"))
+                            },
+                            |id| self.repo.find_commit(Oid::from_str(id)?),
+                        )?
+                        .parent(0)?;
+
+                    let tree = parent_commit.tree()?;
+                    let blob = tree
+                        .get_name(USER_BIN_PATH)
+                        .context(PreviousVersionErr { bin: USER_BIN_PATH })?
+                        .to_object(&self.repo)?
+                        .into_blob()
+                        .map_err(|_| git2::Error::from_str("Couldn't convert object to blob"))?;
+
+                    let (nonce_slice, ciphertext) = blob.content().split_at(12);
+                    let decrypted_buf = self.store_aes.decrypt(nonce_slice.into(), ciphertext)?;
+
+                    let old_user =
+                        rkyv::from_bytes::<User>(&decrypted_buf).map_err(|err| err.to_string())?;
+
+                    let fields = parts[2].split(',').collect::<Vec<_>>();
+
+                    for field in fields {
+                        if field == "name" {
+                            self.user.name = old_user.name.clone();
+                        } else if field == "email" {
+                            self.user.email = old_user.email.clone();
+                        } else if field == "remote" {
+                            self.user.remote = old_user.remote.clone();
+                        }
+                    }
+                }
+                _ => return Err(CommitMsgFormatErr { message }.build()),
+            },
+
+            _ => return Err(CommitMsgFormatErr { message }.build()),
+        }
 
         Ok(())
     }
@@ -360,17 +476,15 @@ impl Manager {
         if self.fs_dirty {
             let mut index = self.repo.index()?;
 
-            if self.fs_dirty {
-                self.store.save(&self.data_dir.join(STORE_BIN_PATH))?;
-                self.user.save(
-                    &self.data_dir.join(USER_BIN_PATH),
-                    &self.store_aes,
-                    self.user_nonce,
-                )?;
+            self.store.save(&self.data_dir.join(STORE_BIN_PATH))?;
+            self.user.save(
+                &self.data_dir.join(USER_BIN_PATH),
+                &self.store_aes,
+                self.user_nonce,
+            )?;
 
-                index.add_path(Path::new(USER_BIN_PATH))?;
-                index.add_path(Path::new(STORE_BIN_PATH))?;
-            }
+            index.add_path(Path::new(STORE_BIN_PATH))?;
+            index.add_path(Path::new(USER_BIN_PATH))?;
 
             let oid = index.write_tree()?;
             let signature = Signature::now(&self.user.name, &self.user.email)?;
@@ -394,4 +508,14 @@ impl Manager {
 
         Ok(self.success_message)
     }
+}
+
+fn parse_commit_message(message: &str) -> Vec<String> {
+    let mut commit_parts = message.split(' ').map(String::from).collect::<Vec<_>>();
+
+    if commit_parts.len() == 2 {
+        commit_parts.push("-".to_string());
+    }
+
+    commit_parts
 }
