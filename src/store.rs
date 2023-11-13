@@ -122,7 +122,7 @@ impl Manager {
         Ok(())
     }
 
-    pub fn sync(&mut self, dir: SyncDirection) -> Result<()> {
+    pub fn sync(&mut self, dir: SyncDirection, force: bool) -> Result<()> {
         let Some(user_remote) = &self.user.remote else {
             println!("Remote not set");
             return Ok(());
@@ -133,8 +133,6 @@ impl Manager {
         cb.credentials(|_, _, _| {
             Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
         });
-
-        cb.transfer_progress(|progress| true);
 
         match dir {
             SyncDirection::Push => {
@@ -148,7 +146,10 @@ impl Manager {
                 push_options.remote_callbacks(push_cb);
 
                 remote.push(
-                    &["refs/heads/main:refs/heads/main"],
+                    &[format!(
+                        "{}refs/heads/main:refs/heads/main",
+                        if force { "+" } else { "" }
+                    )],
                     Some(&mut push_options),
                 )?;
 
@@ -176,7 +177,7 @@ impl Manager {
                         r.set_target(
                             fetch_commit.id(),
                             &format!(
-                                "Fast-Forward: Setting {} to id: {}",
+                                "fast-forward: setting {} to id: {}",
                                 name,
                                 fetch_commit.id()
                             ),
@@ -190,7 +191,7 @@ impl Manager {
                             "refs/heads/main",
                             fetch_commit.id(),
                             true,
-                            &format!("Setting main to {}", fetch_commit.id()),
+                            &format!("setting main to id: {}", fetch_commit.id()),
                         )?;
 
                         self.repo.set_head("refs/heads/main")?;
@@ -248,7 +249,7 @@ impl Manager {
 
     pub fn nuke(&mut self, sync: bool, archive: bool) -> Result<()> {
         if sync {
-            self.sync(SyncDirection::Push)?;
+            self.sync(SyncDirection::Push, true)?;
         }
 
         if archive {

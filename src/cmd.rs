@@ -150,6 +150,10 @@ pub enum StoreSubcommand {
         /// sync store in direction
         #[arg(long, short, value_enum, default_value_t = SyncDirection::Push)]
         dir: SyncDirection,
+
+        /// force push to remote
+        #[arg(long, short)]
+        force: bool,
     },
 
     /// Remove the store, user data and all git history

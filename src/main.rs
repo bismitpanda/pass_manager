@@ -66,7 +66,7 @@ fn run() -> Result<Option<String>> {
             manager.add(label, *input, *len, *special_chars, *overwrite)?;
         }
 
-        CliSubcommand::Initialize => unreachable!(),
+        CliSubcommand::Initialize => (),
 
         CliSubcommand::History => manager.history()?,
 
@@ -78,7 +78,7 @@ fn run() -> Result<Option<String>> {
 
                 StoreSubcommand::Modify => manager.modify()?,
 
-                StoreSubcommand::Sync { dir } => manager.sync(*dir)?,
+                StoreSubcommand::Sync { dir, force } => manager.sync(*dir, *force)?,
 
                 StoreSubcommand::Nuke { sync, archive } => manager.nuke(*sync, *archive)?,
             };
