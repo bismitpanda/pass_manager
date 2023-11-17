@@ -5,22 +5,29 @@ use std::{
 };
 
 use aes_gcm::{aead::Aead, Aes256Gcm};
+use hashbrown::HashMap;
 use owo_colors::OwoColorize;
 use snafu::{OptionExt, ResultExt};
 use url::Url;
 
 use crate::{
     error::{CommandErr, CredsErr, FsErr, HostErr, Result, SplitErr},
-    manager::Manager,
+    manager::{Manager, ORIGIN},
 };
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
+#[archive(check_bytes)]
+pub struct Credentials {
+    pub username: String,
+    pub password: String,
+}
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
 #[archive(check_bytes)]
 pub struct Remote {
     pub host: String,
     pub url: String,
-    pub username: String,
-    pub password: String,
+    pub creds: Option<Credentials>,
 }
 
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
@@ -40,22 +47,29 @@ impl User {
         }
     }
 
-    pub fn set_remote(&mut self, remote: &str) -> Result<()> {
+    pub fn set_remote(&mut self, remote: &str, creds_required: Option<bool>) -> Result<()> {
         if remote == "-" {
             self.remote = None;
         } else {
             let url = Url::parse(remote)?;
 
             let host = url.host().context(HostErr)?.to_string();
-            let (username, password) = get_remote_credentials(&host).map_err(|err| {
-                git2::Error::from_str(&format!("Couldn't get credentials: {err}"))
-            })?;
 
             self.remote = Some(Remote {
-                host,
+                host: host.clone(),
                 url: remote.to_string(),
-                username,
-                password,
+                creds: if creds_required.unwrap_or_else(|| {
+                    self.remote
+                        .as_ref()
+                        .is_some_and(|remote| remote.creds.is_some())
+                }) {
+                    let (username, password) = get_remote_credentials(&host).map_err(|err| {
+                        git2::Error::from_str(&format!("Couldn't get credentials: {err}"))
+                    })?;
+                    Some(Credentials { username, password })
+                } else {
+                    None
+                },
             });
         }
 
@@ -86,6 +100,19 @@ impl User {
 
         Ok(())
     }
+
+    pub fn to_hashmap(&self) -> HashMap<String, String> {
+        let mut map = HashMap::from([
+            ("name".to_string(), self.name.clone()),
+            ("email".to_string(), self.email.clone()),
+        ]);
+
+        if let Some(remote) = &self.remote {
+            map.insert("email".to_string(), remote.url.clone());
+        }
+
+        map
+    }
 }
 
 impl Manager {
@@ -112,6 +139,7 @@ impl Manager {
         name: &Option<String>,
         email: &Option<String>,
         remote: &Option<String>,
+        creds_required: Option<bool>,
     ) -> Result<()> {
         if let Some(name) = name {
             self.user.name = name.clone();
@@ -123,23 +151,31 @@ impl Manager {
 
         if let Some(remote) = remote {
             if remote == "-" {
-                if self.repo.find_remote("origin").is_ok() {
-                    self.repo.remote_delete("origin")?;
+                if self.repo.find_remote(ORIGIN).is_ok() {
+                    self.repo.remote_delete(ORIGIN)?;
                 }
-            } else if self.repo.find_remote("origin").is_ok() {
-                self.repo.remote_set_url("origin", remote)?;
+            } else if self.repo.find_remote(ORIGIN).is_ok() {
+                self.repo.remote_set_url(ORIGIN, remote)?;
             } else {
-                self.repo.remote("origin", remote)?;
+                self.repo.remote(ORIGIN, remote)?;
             }
 
-            self.user.set_remote(remote)?;
+            self.user.set_remote(remote, creds_required)?;
         }
 
-        let fields = [("name", name), ("email", email), ("remote", remote)]
-            .iter()
-            .filter_map(|(name, el)| el.is_some().then_some(*name))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let fields = [
+            ("name", name),
+            ("email", email),
+            ("remote", remote),
+            (
+                "creds_required",
+                &creds_required.map(|value| value.to_string()),
+            ),
+        ]
+        .iter()
+        .filter_map(|(name, el)| el.is_some().then_some(*name))
+        .collect::<Vec<_>>()
+        .join(", ");
 
         self.fs_dirty = true;
         self.success_message = Some(format!("Successfully set user {fields}"));
@@ -148,7 +184,7 @@ impl Manager {
     }
 }
 
-fn get_remote_credentials(host: &str) -> Result<(String, String)> {
+pub fn get_remote_credentials(host: &str) -> Result<(String, String)> {
     let command = Command::new("git")
         .args(["credential", "fill"])
         .stdin(Stdio::piped())

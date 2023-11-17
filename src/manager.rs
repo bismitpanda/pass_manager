@@ -12,7 +12,10 @@ use chrono::{FixedOffset, NaiveDateTime};
 use clipboard::{ClipboardContext, ClipboardProvider};
 use dialoguer::{theme::ColorfulTheme, Confirm, Input, Password};
 use email_address::EmailAddress;
-use git2::{Config, Oid, Repository, RepositoryInitOptions, Signature};
+use git2::{
+    Config, Cred, Direction, Oid, Remote, RemoteCallbacks, Repository, RepositoryInitOptions,
+    Signature,
+};
 use hashbrown::hash_map::Entry;
 use owo_colors::OwoColorize;
 use rand::seq::SliceRandom;
@@ -21,13 +24,15 @@ use url::Url;
 
 use crate::{
     error::{
-        ChronoErr, CommitMsgFormatErr, FsErr, InvalidCommitMessageUtf8Err, InvalidShortIdErr,
-        PreviousVersionErr, Result,
+        ChronoErr, CommitMsgFormatErr, FsErr, HostErr, InvalidCommitMessageUtf8Err,
+        InvalidShortIdErr, PassManagerErr, PreviousVersionErr, Result,
     },
     store::{Item, Store},
     table::Table,
-    user::User,
+    user::{get_remote_credentials, User},
 };
+
+pub const ORIGIN: &str = "origin";
 
 pub struct Manager {
     pub repo: Repository,
@@ -51,8 +56,8 @@ pub fn length_validator(inp: &str) -> Result<(), String> {
         .ok_or_else(|| "Password must be longer than 8".to_string())
 }
 
-const STORE_BIN_PATH: &str = "pm_store.bin";
-const USER_BIN_PATH: &str = "user.bin";
+pub const STORE_BIN_PATH: &str = "pm_store.bin";
+pub const USER_BIN_PATH: &str = "user.bin";
 
 impl Manager {
     pub fn new(data_dir: PathBuf) -> Result<Self> {
@@ -137,20 +142,6 @@ impl Manager {
 
         let mut user = User::new(name, email);
 
-        if Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt("Do you want to enter a remote service")
-            .interact()?
-        {
-            let remote_url = Input::with_theme(&ColorfulTheme::default())
-                .with_prompt("Enter remote url")
-                .validate_with(|inp: &String| {
-                    Url::parse(inp).map(|_| ()).map_err(|err| err.to_string())
-                })
-                .interact()?;
-
-            user.set_remote(&remote_url)?;
-        };
-
         let store = Store::new(encrypted_key, salt, nonce_slice);
         let store_aes = Aes256Gcm::new(&key.into());
 
@@ -162,33 +153,68 @@ impl Manager {
         user.save(&data_dir.join(USER_BIN_PATH), &store_aes, user_nonce)?;
         store.save(&data_dir.join(STORE_BIN_PATH))?;
 
-        let mut init_opts = RepositoryInitOptions::new();
-        init_opts.initial_head("main");
+        let mut remote_has_data = false;
 
-        let repo = Repository::init_opts(&data_dir, &init_opts)?;
+        let repo = if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Do you want to enter a remote service")
+            .interact()?
+        {
+            let remote_url = Input::with_theme(&ColorfulTheme::default())
+                .with_prompt("Enter remote url")
+                .validate_with(|inp: &String| {
+                    (|| {
+                        let url = Url::parse(inp)?;
+                        let (username, password) =
+                            get_remote_credentials(&url.host().context(HostErr)?.to_string())?;
 
-        repo.add_ignore_rule(&format!("{STORE_BIN_PATH}.bak\n{USER_BIN_PATH}.bak"))?;
+                        let mut cb = RemoteCallbacks::new();
+                        cb.credentials(|_, _, _| Cred::userpass_plaintext(&username, &password));
 
-        if let Some(remote) = &user.remote {
-            repo.remote("origin", &remote.url)?;
-        }
+                        let mut remote = Remote::create_detached(inp.as_bytes())?;
 
-        let mut index = repo.index()?;
+                        remote.connect_auth(Direction::Fetch, Some(cb), None)?;
 
-        index.add_path(Path::new(STORE_BIN_PATH))?;
-        index.add_path(Path::new(USER_BIN_PATH))?;
+                        remote_has_data = !remote.list()?.is_empty();
 
-        let oid = index.write_tree()?;
-        let signature = Signature::now(&user.name, &user.email)?;
+                        Ok::<(), PassManagerErr>(())
+                    })()
+                    .map_err(|err| err.to_string())
+                })
+                .interact()?;
 
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            "store initialize",
-            &repo.find_tree(oid)?,
-            &[],
-        )?;
+            let needs_creds = Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt("Does remote needs credentials")
+                .interact()?;
+
+            user.set_remote(&remote_url, Some(needs_creds))?;
+
+            let repo = if remote_has_data
+                && Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Remote has previous data. Do you want to use it")
+                    .interact()?
+            {
+                Repository::clone(&remote_url, &data_dir)?
+            } else {
+                let mut init_opts = RepositoryInitOptions::new();
+                init_opts.initial_head("main");
+
+                Repository::init_opts(&data_dir, &init_opts)?
+            };
+
+            set_repo(&repo, &user)?;
+            repo.remote(ORIGIN, &remote_url)?;
+
+            repo
+        } else {
+            let mut init_opts = RepositoryInitOptions::new();
+            init_opts.initial_head("main");
+
+            let repo = Repository::init_opts(&data_dir, &init_opts)?;
+
+            set_repo(&repo, &user)?;
+
+            repo
+        };
 
         Ok(Self {
             store,
@@ -518,4 +544,26 @@ fn parse_commit_message(message: &str) -> Vec<String> {
     }
 
     commit_parts
+}
+
+fn set_repo(repo: &Repository, user: &User) -> Result<()> {
+    repo.add_ignore_rule(&format!("{STORE_BIN_PATH}.bak\n{USER_BIN_PATH}.bak"))?;
+
+    let mut index = repo.index()?;
+
+    index.add_path(Path::new(STORE_BIN_PATH))?;
+    index.add_path(Path::new(USER_BIN_PATH))?;
+
+    let oid = index.write_tree()?;
+    let signature = Signature::now(&user.name, &user.email)?;
+
+    repo.commit(
+        Some("HEAD"),
+        &signature,
+        &signature,
+        "store initialize",
+        &repo.find_tree(oid)?,
+        &[],
+    )?;
+    Ok(())
 }

@@ -1,6 +1,6 @@
 [package]
 name = "pm"
-version = "0.10.2"
+version = "0.11.0"
 edition = "2021"
 
 [dependencies]
@@ -28,3 +28,8 @@ panic = "abort"
 lto = true
 codegen-units = 1
 strip = true
+
+[lints.clippy]
+pedantic = "warn"
+nursery = "warn"
+all = "warn"

@@ -5,18 +5,19 @@ use aes_gcm::{
     Aes256Gcm,
 };
 use argon2::Argon2;
-use dialoguer::{theme::ColorfulTheme, Confirm, Password};
-use git2::{Cred, Direction, FetchOptions, PushOptions, RemoteCallbacks};
+use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect, Password};
+use git2::{Cred, Direction, PushOptions, RemoteCallbacks, Repository};
 use hashbrown::HashMap;
 use snafu::ResultExt;
 
 use crate::{
     cmd::SyncDirection,
+    diff,
     error::{FsErr, Result},
-    manager::{length_validator, Manager},
+    manager::{length_validator, Manager, ORIGIN, STORE_BIN_PATH},
+    user::Credentials,
 };
-
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Clone, PartialEq, Eq)]
 #[archive(check_bytes)]
 pub struct Item {
     pub nonce: [u8; 12],
@@ -124,15 +125,14 @@ impl Manager {
 
     pub fn sync(&mut self, dir: SyncDirection, force: bool) -> Result<()> {
         let Some(user_remote) = &self.user.remote else {
-            println!("Remote not set");
-            return Ok(());
+            return Ok(println!("Remote not set"));
         };
 
-        let mut remote = self.repo.find_remote("origin")?;
+        let mut remote = self.repo.find_remote(ORIGIN)?;
         let mut cb = RemoteCallbacks::new();
-        cb.credentials(|_, _, _| {
-            Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
-        });
+        if let Some(Credentials { username, password }) = &user_remote.creds {
+            cb.credentials(|_, _, _| Cred::userpass_plaintext(username, password));
+        }
 
         match dir {
             SyncDirection::Push => {
@@ -140,9 +140,9 @@ impl Manager {
 
                 let mut push_options = PushOptions::new();
                 let mut push_cb = RemoteCallbacks::new();
-                push_cb.credentials(|_, _, _| {
-                    Cred::userpass_plaintext(&user_remote.username, &user_remote.password)
-                });
+                if let Some(Credentials { username, password }) = &user_remote.creds {
+                    push_cb.credentials(|_, _, _| Cred::userpass_plaintext(username, password));
+                }
                 push_options.remote_callbacks(push_cb);
 
                 remote.push(
@@ -157,90 +157,48 @@ impl Manager {
             }
 
             SyncDirection::Pull => {
-                let mut fetch_options = FetchOptions::new();
-                fetch_options.remote_callbacks(cb);
+                let temp_clone_dir = std::env::temp_dir().join("pm_remote");
+                std::fs::create_dir_all(&temp_clone_dir).context(FsErr {
+                    path: temp_clone_dir.display().to_string(),
+                })?;
 
-                remote.fetch(&["main"], Some(&mut fetch_options), None)?;
+                Repository::clone(&user_remote.url, &temp_clone_dir)?;
 
-                let fetch_head = self.repo.find_reference("FETCH_HEAD")?;
-                let fetch_commit = self.repo.reference_to_annotated_commit(&fetch_head)?;
+                let store = rkyv::from_bytes::<Store>(
+                    &std::fs::read(temp_clone_dir.join(STORE_BIN_PATH)).context(FsErr {
+                        path: temp_clone_dir.join(STORE_BIN_PATH).display().to_string(),
+                    })?,
+                )
+                .map_err(|err| err.to_string())?;
 
-                let (analysis, _) = self.repo.merge_analysis(&[&fetch_commit])?;
+                let store_diff_items = diff::diff(&self.store.items, &store.items).concat();
+                let store_diff_indices = MultiSelect::with_theme(&ColorfulTheme::default())
+                    .with_prompt("Select changes to pull for store")
+                    .items(&store_diff_items)
+                    .interact()?;
 
-                if analysis.is_fast_forward() {
-                    if let Ok(mut r) = self.repo.find_reference("refs/heads/main") {
-                        let name = r.name().map_or_else(
-                            || String::from_utf8_lossy(r.name_bytes()).to_string(),
-                            ToString::to_string,
-                        );
+                let selected_store_items =
+                    get_values_from_indices(&store_diff_indices, &store_diff_items);
 
-                        r.set_target(
-                            fetch_commit.id(),
-                            &format!(
-                                "fast-forward: setting {} to id: {}",
-                                name,
-                                fetch_commit.id()
-                            ),
-                        )?;
+                for diff::Item(diff_kind, key) in selected_store_items {
+                    match diff_kind {
+                        diff::Kind::Added | diff::Kind::Modified => {
+                            let value = store.items[&key].clone();
+                            self.store.items.insert(key, value);
+                        }
 
-                        self.repo.set_head(&name)?;
-                        self.repo
-                            .checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
-                    } else {
-                        self.repo.reference(
-                            "refs/heads/main",
-                            fetch_commit.id(),
-                            true,
-                            &format!("setting main to id: {}", fetch_commit.id()),
-                        )?;
-
-                        self.repo.set_head("refs/heads/main")?;
-                        self.repo.checkout_head(Some(
-                            git2::build::CheckoutBuilder::default()
-                                .allow_conflicts(true)
-                                .conflict_style_merge(true)
-                                .force(),
-                        ))?;
-                    };
-                } else if analysis.is_normal() {
-                    let head_commit = self
-                        .repo
-                        .reference_to_annotated_commit(&self.repo.head()?)?;
-
-                    let ancestor = self
-                        .repo
-                        .find_commit(self.repo.merge_base(head_commit.id(), fetch_commit.id())?)?
-                        .tree()?;
-
-                    let mut index = self.repo.merge_trees(
-                        &ancestor,
-                        &self.repo.find_commit(head_commit.id())?.tree()?,
-                        &self.repo.find_commit(fetch_commit.id())?.tree()?,
-                        None,
-                    )?;
-
-                    if index.has_conflicts() {
-                        return Ok(self.repo.checkout_index(Some(&mut index), None)?);
+                        diff::Kind::Deleted => {
+                            self.store.items.remove(&key);
+                        }
                     }
-
-                    let sig = self.repo.signature()?;
-
-                    self.repo.commit(
-                        Some("HEAD"),
-                        &sig,
-                        &sig,
-                        &format!("store pull {}:{}", fetch_commit.id(), head_commit.id()),
-                        &self.repo.find_tree(index.write_tree_to(&self.repo)?)?,
-                        &[
-                            &self.repo.find_commit(head_commit.id())?,
-                            &self.repo.find_commit(fetch_commit.id())?,
-                        ],
-                    )?;
-
-                    self.repo.checkout_head(None)?;
                 }
 
+                std::fs::remove_dir_all(&temp_clone_dir).context(FsErr {
+                    path: temp_clone_dir.display().to_string(),
+                })?;
+
                 self.success_message = Some("Successfully pulled store from remote".to_string());
+                todo!();
             }
         }
 
@@ -270,4 +228,11 @@ impl Manager {
         self.success_message = Some("Successfully nuked the data".to_string());
         Ok(())
     }
+}
+
+fn get_values_from_indices<T: Clone>(indices: &[usize], values: &[T]) -> Vec<T> {
+    indices
+        .iter()
+        .map(|&i| values[i].clone())
+        .collect::<Vec<_>>()
 }

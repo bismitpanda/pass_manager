@@ -55,13 +55,22 @@ impl Cli {
                         name,
                         email,
                         remote,
+                        creds_required,
                     },
             }) => {
-                let fields = [("name", name), ("email", email), ("remote", remote)]
-                    .iter()
-                    .filter_map(|(name, el)| el.is_some().then_some(*name))
-                    .collect::<Vec<_>>()
-                    .join(",");
+                let fields = [
+                    ("name", name),
+                    ("email", email),
+                    ("remote", remote),
+                    (
+                        "creds_required",
+                        &creds_required.map(|value| value.to_string()),
+                    ),
+                ]
+                .iter()
+                .filter_map(|(name, el)| el.is_some().then_some(*name))
+                .collect::<Vec<_>>()
+                .join(",");
 
                 format!("user set {fields}")
             }
@@ -200,6 +209,10 @@ pub enum UserSubcommand {
         /// set the remote endpoint of user. (pass "-" to remove any added remote)
         #[arg(long, short, value_parser = parse_remote, allow_hyphen_values = true)]
         remote: Option<String>,
+
+        /// sets whether remote host needs credential authentication
+        #[arg(long, short)]
+        creds_required: Option<bool>,
     },
 }
 

@@ -1,6 +1,5 @@
-#![warn(clippy::pedantic, clippy::nursery, clippy::all)]
-
 mod cmd;
+mod diff;
 mod error;
 mod manager;
 mod store;
@@ -91,7 +90,8 @@ fn run() -> Result<Option<String>> {
                 name,
                 email,
                 remote,
-            } => manager.set_user(name, email, remote)?,
+                creds_required,
+            } => manager.set_user(name, email, remote, *creds_required)?,
         },
     }
 
