@@ -146,10 +146,11 @@ impl Manager {
                 push_options.remote_callbacks(push_cb);
 
                 remote.push(
-                    &[format!(
-                        "{}refs/heads/main:refs/heads/main",
-                        if force { "+" } else { "" }
-                    )],
+                    &[if force {
+                        "+refs/heads/main:refs/heads/main"
+                    } else {
+                        "refs/heads/main:refs/heads/main"
+                    }],
                     Some(&mut push_options),
                 )?;
 
