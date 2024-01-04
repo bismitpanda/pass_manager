@@ -12,7 +12,7 @@ use snafu::ResultExt;
 
 use crate::{
     cmd::SyncDirection,
-    diff,
+    diff::{diff, Item as DiffItem},
     error::{FsErr, Result},
     manager::{length_validator, Manager, ORIGIN, STORE_BIN_PATH},
     user::Credentials,
@@ -172,7 +172,7 @@ impl Manager {
                 )
                 .map_err(|err| err.to_string())?;
 
-                let store_diff_items = diff::diff(&self.store.items, &store.items).concat();
+                let store_diff_items = diff(&self.store.items, &store.items).concat();
                 let store_diff_indices = MultiSelect::with_theme(&ColorfulTheme::default())
                     .with_prompt("Select changes to pull for store")
                     .items(&store_diff_items)
@@ -181,14 +181,14 @@ impl Manager {
                 let selected_store_items =
                     get_values_from_indices(&store_diff_indices, &store_diff_items);
 
-                for diff::Item(diff_kind, key) in selected_store_items {
-                    match diff_kind {
-                        diff::Kind::Added | diff::Kind::Modified => {
+                for item in selected_store_items {
+                    match item {
+                        DiffItem::Added(key) | DiffItem::Modified(key) => {
                             let value = store.items[&key].clone();
                             self.store.items.insert(key, value);
                         }
 
-                        diff::Kind::Deleted => {
+                        DiffItem::Deleted(key) => {
                             self.store.items.remove(&key);
                         }
                     }

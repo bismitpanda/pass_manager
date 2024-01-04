@@ -8,22 +8,19 @@ pub struct Result<K> {
     pub deleted: HashSet<K>,
 }
 
-#[derive(Clone, Copy)]
-pub enum Kind {
-    Added,
-    Modified,
-    Deleted,
-}
-
 #[derive(Clone)]
-pub struct Item<T>(pub Kind, pub T);
+pub enum Item<T> {
+    Added(T),
+    Modified(T),
+    Deleted(T),
+}
 
 impl<T: Display> Display for Item<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.0 {
-            Kind::Added => write!(f, "added '{}'", self.1),
-            Kind::Modified => write!(f, "modified '{}'", self.1),
-            Kind::Deleted => write!(f, "deleted '{}'", self.1),
+        match self {
+            Item::Added(k) => write!(f, "added '{k}'"),
+            Item::Modified(k) => write!(f, "modified '{k}'"),
+            Item::Deleted(k) => write!(f, "deleted '{k}'"),
         }
     }
 }
@@ -32,9 +29,9 @@ impl<K> Result<K> {
     pub fn concat(self) -> Vec<Item<K>> {
         self.added
             .into_iter()
-            .map(|el| Item(Kind::Added, el))
-            .chain(self.modified.into_iter().map(|el| Item(Kind::Modified, el)))
-            .chain(self.deleted.into_iter().map(|el| Item(Kind::Deleted, el)))
+            .map(|el| Item::Added(el))
+            .chain(self.modified.into_iter().map(|el| Item::Modified(el)))
+            .chain(self.deleted.into_iter().map(|el| Item::Deleted(el)))
             .collect()
     }
 }

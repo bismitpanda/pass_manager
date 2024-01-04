@@ -8,12 +8,15 @@ mod table;
 mod user;
 
 use clap::Parser;
-use cmd::{Cli, CliSubcommand, Store, StoreSubcommand, User, UserSubcommand};
 use dialoguer::{theme::ColorfulTheme, Confirm};
-use error::{DataDirErr, Result};
-use manager::Manager;
 use owo_colors::OwoColorize;
 use snafu::OptionExt;
+
+use crate::{
+    cmd::{Cli, CliSubcommand, Store, StoreSubcommand, User, UserSubcommand},
+    error::{DataDirErr, Result},
+    manager::Manager,
+};
 
 fn run() -> Result<Option<String>> {
     let command = Cli::parse();
