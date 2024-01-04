@@ -18,9 +18,9 @@ pub enum Item<T> {
 impl<T: Display> Display for Item<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Item::Added(k) => write!(f, "added '{k}'"),
-            Item::Modified(k) => write!(f, "modified '{k}'"),
-            Item::Deleted(k) => write!(f, "deleted '{k}'"),
+            Self::Added(k) => write!(f, "added '{k}'"),
+            Self::Modified(k) => write!(f, "modified '{k}'"),
+            Self::Deleted(k) => write!(f, "deleted '{k}'"),
         }
     }
 }
