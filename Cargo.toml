@@ -5,22 +5,22 @@ edition = "2021"
 
 [dependencies]
 aes-gcm = "0.10.3"
-anstyle = "1.0.4"
-argon2 = "0.5.2"
-chrono = "0.4.31"
-clap = { version = "4.4.7", features = ["derive"] }
+anstyle = "1.0.6"
+argon2 = "0.5.3"
+chrono = "0.4.34"
+clap = { version = "4.5.1", features = ["derive"] }
 clipboard = "0.5.0"
 dialoguer = { version = "0.11.0", default-features = false, features = ["password"] }
 dirs = "5.0.1"
 email_address = { version = "0.2.4", default-features = false }
-git2 = "0.18.1"
-hashbrown = { version = "0.14.2", features = ["rkyv"] }
-owo-colors = "3.5.0"
+git2 = "0.18.2"
+hashbrown = { version = "0.14.3", features = ["rkyv"] }
+owo-colors = "4.0.0"
 rand = "0.8.5"
-rkyv = { version = "0.7.42", features = ["validation"] }
-snafu = "0.7.5"
+rkyv = { version = "0.7.44", features = ["validation"] }
+snafu = "0.8.0"
 tar = { version = "0.4.40", default-features = false }
-url = "2.4.1"
+url = "2.5.0"
 whoami = { version = "1.4.1", default-features = false }
 
 [profile.release]
